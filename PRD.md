@@ -279,6 +279,7 @@ AC:
 As a Sales Agent, I want to register one or more buyers per booking with their CNIC and photo so that ownership is on record.
 AC:
 - Fields: full name, CNIC (format `12345-1234567-1`), phone (PK mobile format), father/husband name (opt.), address (opt.), photo upload (JPG/PNG ≤ 5 MB).
+- **SMS/WhatsApp reminder consent:** a yes/no flag captured at the time the buyer is registered, recorded with a timestamp. Reminders (FR-7) are only sent to buyers who have given consent. Consent can be updated later by Admin or Accountant, with the change recorded in the audit log.
 - Joint ownership: 2+ buyers each with a share %; shares must total exactly 100%.
 - The first-listed buyer is the primary buyer (used for reminders — D-5).
 - Buyers are deduplicated by CNIC: an existing CNIC loads the stored buyer record (editable), keeping one record per person.
@@ -332,7 +333,8 @@ As an Accountant, I want to keep a daily cash-in/cash-out diary so that the firm
 AC:
 - Recorded payments auto-post as linked In-entries (D-10); manual entries allowed for other income and expenses (category, description, amount, direction, date).
 - Filterable by date/period; shows running daily and period totals for In, Out, and net.
-- Linked entries show a path back to the payment; manual entries can be edited/deleted by Accountant/Admin (linked ones cannot be deleted, only voided with reason).
+- Linked entries show a path back to the payment.
+- Cash entries (Roznamcha) are never edited or deleted after posting. A correction is made by voiding the original entry (with a required reason) and posting a new entry. This preserves the audit trail and guarantees that reports always match the Roznamcha exactly.
 
 ### Epic 6 — Recovery & Reminders
 
@@ -391,7 +393,7 @@ AC:
 
 **FR-4 Booking & buyers**
 - 4.1 Guided booking flow per US-3.1–3.3, including joint ownership shares.
-- 4.2 Buyer CRUD with CNIC validation/dedup, phone validation, photo upload (placeholder for biometric — A-5).
+- 4.2 Buyer CRUD with CNIC validation/dedup, phone validation, photo upload (placeholder for biometric — A-5), and SMS/WhatsApp reminder consent (yes/no, timestamped; updatable by Admin/Accountant and audited — see US-3.2).
 - 4.3 Booking list with filters (date, agent, status, block) and link to plot + buyers + ledger.
 - 4.4 Booking cancellation per US-3.4 (Admin only).
 
@@ -407,6 +409,7 @@ AC:
 **FR-7 Recovery & reminders**
 - 7.1 Recovery dashboard per US-6.1, including CSV export of the current filtered list (D-12).
 - 7.2 Reminder scheduler per US-6.2; channel config (provider credentials, enable/disable per channel), template editing (simple placeholders), reminder log screen.
+- 7.3 Reminders are not sent to a buyer who has not given SMS/WhatsApp consent, regardless of due date or milestone.
 
 **FR-8 Reports**
 - 8.1 Cash flow report (US-7.1); 8.2 Income statement, cash basis (US-7.2); both date-range driven and print-friendly.
@@ -522,7 +525,7 @@ Layout conventions: persistent left navigation; global EN/UR language toggle in 
 | Block | project_id, code/name |
 | Plot | project_id, block_id, plot_number, plot_type (Residential/Commercial), size_marla, width_ft, depth_ft, dimensions_text (display), price_pkr, status, polygon (points, normalized), notes |
 | User | name, email/username, phone, role, password_hash, is_active, preferred_language (en/ur, default en) |
-| Buyer | full_name, father_or_husband_name (opt.), cnic (unique, normalized), phone, address (opt.), photo (file) |
+| Buyer | full_name, father_or_husband_name (opt.), cnic (unique, normalized), phone, address (opt.), photo (file), reminder_consent (bool), reminder_consent_at (timestamp) |
 | Booking | plot_id, booking_date, status (Confirmed / Cancelled), sale_price_pkr, primary_buyer_id, created_by (agent), cancel_reason (opt.), plan snapshot fields (token, down_payment, installment_count, frequency, first_due_date) |
 | BookingBuyer | booking_id, buyer_id, share_pct, is_primary |
 | DueItem | booking_id, sequence, label (Token / Down Payment / Installment #n), due_date, amount_pkr, amount_paid_pkr (derived, cached), status (Pending / Partially Paid / Paid) |
