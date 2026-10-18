@@ -525,7 +525,7 @@ Layout conventions: persistent left navigation; global EN/UR language toggle in 
 | Block | project_id, code/name |
 | Plot | project_id, block_id, plot_number, plot_type (Residential/Commercial), size_marla, width_ft, depth_ft, dimensions_text (display), price_pkr, status, polygon (points, normalized), notes |
 | User | name, email/username, phone, role, password_hash, is_active, preferred_language (en/ur, default en) |
-| Buyer | full_name, father_or_husband_name (opt.), cnic (unique, normalized), phone, address (opt.), photo (file), reminder_consent (bool), reminder_consent_at (timestamp) |
+| Buyer | full_name, father_or_husband_name (opt.), cnic (unique, normalized), phone, address (opt.), photo (file), consent_sms (bool), consent_recorded_at (timestamp) |
 | Booking | plot_id, booking_date, status (Confirmed / Cancelled), sale_price_pkr, primary_buyer_id, created_by (agent), cancel_reason (opt.), plan snapshot fields (token, down_payment, installment_count, frequency, first_due_date) |
 | BookingBuyer | booking_id, buyer_id, share_pct, is_primary |
 | DueItem | booking_id, sequence, label (Token / Down Payment / Installment #n), due_date, amount_pkr, amount_paid_pkr (derived, cached), status (Pending / Partially Paid / Paid) |
