@@ -28,7 +28,7 @@
 | Tables | **26** (25 domain tables + `app_setting`); `_prisma_migrations` is Prisma-managed and not part of the domain model |
 | Enumerated types | **18** (§4) |
 | Read-model modules with no tables | Recovery, Documents, Reporting (0 tables — they read other modules' tables; `ARCHITECTURE.md` §4.2) |
-| SQL-only objects | 8 unique indexes (3 of them partial), 4 partial scan indexes, 48 `CHECK` constraints, 4 trigger functions driving 16 triggers, 1 validation function, 1 sequence (§6) |
+| SQL-only objects | 8 unique indexes (3 of them partial), 4 partial scan indexes, 48 `CHECK` constraints, 4 trigger functions driving 17 triggers, 1 validation function, 1 sequence (§6) |
 | UUID primary keys | Every entity table; exceptions documented in §1.2 |
 | Money columns | Always `numeric(12,2)`; never `float`, `real`, `double precision` or `money` |
 | Write-once tables | `audit_log` (append-only trigger + grants), `cash_entry` and `payment` (column-scoped immutability trigger), `payment_allocation`, `plot_status_history`, `booking_note` (grants only) |
@@ -463,7 +463,8 @@ Buyers, bookings, joint ownership, the plan snapshot, notes and due items (`ARCH
 - **PK:** `id`
 - **FK:** `photo_file_id → file_object.id ON DELETE SET NULL`; `created_by → app_user.id ON DELETE RESTRICT`
 - **UQ:** `uq_buyer_cnic` on `(cnic)` — "unique index on normalized CNIC" (`ARCHITECTURE.md` §12.8)
-- **CK [SQL]:** `ck_buyer_cnic_format` — `cnic ~ '^[0-9]{5}-[0-9]{7}-[0-9]$'`; `ck_buyer_phone_e164` — `phone ~ '^\+92[0-9]{10}$'` (a PK mobile number); `ck_buyer_consent_pair` — `consent_sms = false OR consent_recorded_at IS NOT NULL` (a `true` flag must carry a timestamp; a recorded *refusal* is `false` **with** a timestamp, which is different from "not yet asked")
+- **CK [SQL]:** `ck_buyer_cnic_format` — `cnic ~ '^[0-9]{5}-[0-9]{7}-[0-9]$'`; `ck_buyer_phone_e164` — `phone ~ '^\+[1-9][0-9]{7,14}$'` (general E.164, DQ-14); `ck_buyer_consent_pair` — `consent_sms = false OR consent_recorded_at IS NOT NULL` (a `true` flag must carry a timestamp; a recorded *refusal* is `false` **with** a timestamp, which is different from "not yet asked")
+- **Phone format is global E.164, not Pakistani-only** (DQ-14); SMS deliverability to a non-Pakistani number is a provider/reminders-layer concern recorded in the free-text `reminder_log.reason`, never a schema-level rejection of the buyer.
 - **IX:** `ix_buyer_phone` on `(phone)` — the recovery list and the reminder recipient lookup
 - **The Sales module owns consent writes.** Admin or Accountant may invoke the command (PRD FR-4.2); Reminders only reads `consent_sms` at claim time and never updates it (`ARCHITECTURE.md` §12.8). Each change writes an `audit_log` row in the same transaction.
 
@@ -516,6 +517,7 @@ Buyers, bookings, joint ownership, the plan snapshot, notes and due items (`ARCH
 | `frequency` | `installment_frequency` | no | — | `MONTHLY` / `QUARTERLY` |
 | `first_due_date` | `date` | no | — | First installment date |
 | `created_at` | `timestamptz` | no | `now()` | |
+| `updated_at` | `timestamptz` | no | `now()` | Trigger-maintained (§6.5); Q-1 rewrites update it |
 
 - **PK:** `id`; **FK:** `booking_id → booking.id ON DELETE RESTRICT`
 - **UQ:** `uq_payment_plan_booking` on `(booking_id)`
@@ -932,7 +934,7 @@ PRD §13 and `ARCHITECTURE.md` §4.2 do not name every object a correct schema n
 | `payment.status`, `void_reason` and the three void columns | PRD §13 names status and void_reason; `voided_at`/`voided_by` make the transition auditable without a join |
 | `cash_entry.linked_payment_id` | PRD §13 names it; the unique partial index is the new part (§6.2) |
 | `cash_category.nature` | `ARCHITECTURE.md` §11.7 and Q-6; PRD's "expense category" does not cover income/openings |
-| `due_item.kind`, `updated_at` | `sequence` and `label` are PRD §13 fields; `kind` distinguishes token/down payment/installment in SQL, and `updated_at` tracks the only mutable row in Sales |
+| `due_item.kind`, `updated_at` | `sequence` and `label` are PRD §13 fields; `kind` distinguishes token/down payment/installment in SQL. `updated_at` tracks the only Sales row mutated by ordinary day-to-day processing (`amount_paid`/`status` per payment), as opposed to the exceptional, version-gated edits on `booking` and `buyer` |
 | `plot_status_history.id`, `actor_user_id`, `reason` | PRD FR-3.4 requires a history; the columns make each row attributable and explain reserve/release/cancel |
 | `project.master_plan_width_px`, `height_px`, `uploaded_at` | R-8 and Q-12 require the aspect ratio; storing dimensions with the image avoids re-reading the blob |
 | `reminder_claim.channel` | The claim is per milestone; recording the channel makes an in-flight claim explainable if configuration changes mid-send |
@@ -1233,7 +1235,7 @@ ALTER TABLE plot_status_history ADD CONSTRAINT ck_plot_history_transition
 ALTER TABLE buyer ADD CONSTRAINT ck_buyer_cnic_format
   CHECK (cnic ~ '^[0-9]{5}-[0-9]{7}-[0-9]$');
 ALTER TABLE buyer ADD CONSTRAINT ck_buyer_phone_e164
-  CHECK (phone ~ '^\+92[0-9]{10}$');
+  CHECK (phone ~ '^\+[1-9][0-9]{7,14}$');
 ALTER TABLE buyer ADD CONSTRAINT ck_buyer_consent_pair
   CHECK (consent_sms = false OR consent_recorded_at IS NOT NULL);
 ALTER TABLE booking ADD CONSTRAINT ck_booking_price
@@ -1427,8 +1429,8 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
     'app_user', 'company', 'project', 'block', 'plot', 'buyer', 'booking',
-    'due_item', 'cash_category', 'reminder_template', 'provider_config',
-    'reminder_claim', 'app_setting'
+    'payment_plan', 'due_item', 'cash_category', 'reminder_template',
+    'provider_config', 'reminder_claim', 'app_setting'
   ] LOOP
     EXECUTE format(
       'CREATE TRIGGER trg_set_updated_at
@@ -1438,7 +1440,7 @@ BEGIN
 END $$;
 ```
 
-Thirteen tables carry `updated_at`; the four append-only/void-only tables (`payment`, `payment_allocation`, `cash_entry`, `audit_log`) and the event/history tables (`session`, `login_throttle`, `plot_status_history`, `booking_note`, `file_object`, `job_run`) deliberately do not.
+Fourteen tables now carry the trigger, including `payment_plan`, which Q-1 allows to be rewritten before the first payment is recorded. The remaining twelve deliberately do not: the four append-only/void-only tables (`payment`, `payment_allocation`, `cash_entry`, `audit_log`), the event/history tables (`session`, `login_throttle`, `plot_status_history`, `booking_note`, `file_object`, `job_run`), and `booking_buyer` (edits replace rows via delete+insert, never `UPDATE`) with `reminder_log` (insert-only, one row per attempt or skip). That accounts for all 26 tables.
 
 ### 6.6 Functions and sequence
 
@@ -1685,13 +1687,13 @@ The `DO` block is a guard, not decoration: Prisma creates `_prisma_migrations` d
 -- tables are the ones §1.6 declares never-deleted or append-only.
 REVOKE DELETE ON
   payment, payment_allocation, cash_entry, due_item, audit_log,   -- `ARCHITECTURE.md` §14.6 list
-  booking, buyer, project, company, app_user,                     -- never deleted
+  booking, buyer, project, company, app_user, payment_plan,       -- never deleted
   plot_status_history, booking_note, reminder_claim               -- append-only
 FROM spm_app;
 
 -- Write-once tables: no UPDATE at all.
 REVOKE UPDATE ON
-  audit_log, payment_allocation, plot_status_history, booking_note
+  audit_log, payment_allocation, plot_status_history, booking_note, reminder_log
 FROM spm_app;
 
 -- No bulk destruction and no schema changes.
@@ -1720,10 +1722,10 @@ WHERE grantee = 'spm_app'
   AND (
     (privilege_type = 'DELETE' AND table_name IN
       ('payment','payment_allocation','cash_entry','due_item','audit_log',
-       'booking','buyer','project','company','app_user','plot_status_history','booking_note','reminder_claim'))
+       'booking','buyer','project','company','app_user','payment_plan','plot_status_history','booking_note','reminder_claim'))
     OR
     (privilege_type = 'UPDATE' AND table_name IN
-      ('audit_log','payment_allocation','plot_status_history','booking_note'))
+      ('audit_log','payment_allocation','plot_status_history','booking_note','reminder_log'))
   );
 ```
 
@@ -1819,7 +1821,7 @@ Prisma Migrate is the only migration runner (`ARCHITECTURE.md` §3.4, §14.2). H
 | `0004_sql_unique_indexes` | Idempotency, singleton, linked-payment, claim and category-name uniques (§6.2) | Hand-written |
 | `0005_sql_checks` | All 48 `CHECK` constraints (§6.3) | Hand-written |
 | `0006_sql_guard_triggers` | Append-only and immutability triggers and functions (§6.4) | Hand-written |
-| `0007_sql_updated_at` | `spm_set_updated_at()` and its 13 triggers (§6.5) | Hand-written |
+| `0007_sql_updated_at` | `spm_set_updated_at()` and its 14 triggers (§6.5) | Hand-written |
 | `0008_seed_reference_data` | Cash categories, reminder templates, provider config (§9) | Hand-written, idempotent |
 
 Folder names carry Prisma's timestamp prefix (`20261019120000_sql_checks`); the table uses the logical suffix for readability. Migration **files are never edited after they have been applied anywhere** — not in production, not in staging. A correction is a new migration.
@@ -1902,6 +1904,7 @@ These are **schema-level** questions that `PRD.md` and `ARCHITECTURE.md` leave g
 | DQ-11 | Can `booking_ref` have gaps? | **Yes.** `BK-1001` upward; a rolled-back booking consumes its number. The reference is an identifier, not a count | Gapless numbering would need a lock or a counter table; reports that count bookings must count rows |
 | DQ-12 | Should reminder milestones be an enum? | **No** — `smallint` 10/7/3/0 with a CHECK. The value is used as `due_date - N days`, i.e. arithmetic (`ARCHITECTURE.md` §10.5) | An enum would add casts around every date calculation; the CHECK gives the same safety |
 | DQ-13 | Which `cash_category` do auto-posted payment receipts use? | A single seeded `INCOME` category, **Booking Receipt**. PRD §13 seeds only expense categories and does not name it | If the client wants per-project or per-method income categories, auto-posting needs a mapping rule (one category per project/method) — a product decision, not a schema one |
+| DQ-14 | Should buyer.phone accept only Pakistani (+92) numbers? | No — general E.164 (`ck_buyer_phone_e164`, §6.3). Overseas Pakistani (NRP) buyers often carry foreign numbers; SMS deliverability is a reminders-layer concern, not a reason to reject the buyer record | None — broadens who can be registered; no provider behavior changes until Reminders is live |
 
 **Not open, and deliberately not asked again:** one confirmed booking per plot, void-only payments and cash entries, buyer consent as a structured boolean plus timestamp, company-wide cash book, price/plan edits only at zero payments, English-only reminders, ≤120 installments, dry-run by default. Those are decided in `ARCHITECTURE.md` §19 (Q-1–Q-13) and are implemented as written.
 
