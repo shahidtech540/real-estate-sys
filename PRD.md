@@ -433,7 +433,7 @@ Legend: **Full** = create/edit/delete within module · **Edit** = create/edit ·
 | Record / void payments | Full | — | Full |
 | Roznamcha manual entries | Full | — | Full |
 | Buyer ledger | Full | View | Full |
-| Recovery dashboard | Full | View | Full |
+| Recovery dashboard | Full | View (read-only — see note below) | Full |
 | Reminder config & logs | Full | — | View |
 | Reports | Full | View | Full |
 | Users & roles, audit log | Full | — | — |
@@ -441,6 +441,7 @@ Legend: **Full** = create/edit/delete within module · **Edit** = create/edit ·
 Rules:
 - Permissions are enforced **server-side**; UI hides unavailable actions but is not the security boundary.
 - All actions are attributed to the logged-in user and server time (PKT).
+- **Recovery is read-only for Sales Agents:** they can view the Recovery dashboard (outstanding totals, overdue/upcoming lists) but cannot record payments or perform any write action from it — payment recording and all other Recovery write actions remain restricted to Accountant and Admin.
 
 ---
 
@@ -648,6 +649,12 @@ Available ──book──▶ Booked/Token ──admin marks "Allotted/Sold"─�
 
 - [x] Decisions D-1 … D-12 — **approved 2026-10-18** (§6).
 - [x] Assumptions A-1 … A-12 — **approved 2026-10-18**; A-3 revised to the bilingual UI toggle (§5).
+- [ ] Sample allotment letter wording / company terms text (input to the PDF template).
+- [ ] One real master plan image + a small set of real plots for acceptance testing.
+- [ ] SMS provider account (and WhatsApp go/no-go) before go-live.
+
+*End of document.*
+.
 - [ ] Sample allotment letter wording / company terms text (input to the PDF template).
 - [ ] One real master plan image + a small set of real plots for acceptance testing.
 - [ ] SMS provider account (and WhatsApp go/no-go) before go-live.
