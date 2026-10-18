@@ -657,9 +657,3 @@ Available ──book──▶ Booked/Token ──admin marks "Allotted/Sold"─�
 - [ ] SMS provider account (and WhatsApp go/no-go) before go-live.
 
 *End of document.*
-.
-- [ ] Sample allotment letter wording / company terms text (input to the PDF template).
-- [ ] One real master plan image + a small set of real plots for acceptance testing.
-- [ ] SMS provider account (and WhatsApp go/no-go) before go-live.
-
-*End of document.*
