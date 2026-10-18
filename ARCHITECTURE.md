@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Document status** | v1.0 — implementation baseline. Everything is decided except the items in §19, which need product/client sign-off. |
+| **Document status** | v1.0 — implementation baseline. Every decision is made; §19 (Q-1…Q-13) records the client's decisions and what a reversal would touch. |
 | **Date** | 2026-10-18 |
 | **Product** | Society Plot Manager (SPM) — a single-tenant, internal web application for one real estate company in Pakistan. |
 | **Sources of truth** | `PRD.md` v1.0 (scope, behavior, data) and `DESIGN.md` v1.0 (presentation, interaction). If this document conflicts with either, the PRD/DESIGN win; fix this document. |
@@ -584,6 +584,7 @@ Booking from `Reserved` is allowed only for an Admin with explicit confirmation 
 - A cancelled booking is never deleted and never re-activated; the buyer must rebook.
 - Buyer CNIC is unique and normalized; phone is stored in E.164 but displayed in local format.
 - Editing a buyer's details updates the canonical record (and therefore future PDFs) across all their bookings; this is inherent in A-12 and is audit-logged.
+- Buyer reminder consent is a **Sales-owned field**: `consent_sms` (boolean) and `consent_recorded_at` (timestamp) are captured at registration (PRD US-3.2/FR-4.2), changed only by Admin/Accountant, and every change writes an audit row in the same transaction. Reminders **reads** the field at claim time to decide eligibility (§10.5) but never writes it.
 
 **Interactions:** calls Inventory to transition the plot (same transaction); exposes booking and open-balance queries to Ledger, Recovery, Reminders, and Documents. Calls Audit.
 
@@ -1179,6 +1180,7 @@ A due item is **eligible** when all of the following hold:
 2. Its status is not `PAID` and its remaining amount is > 0.
 3. Its due date is today or later (no overdue follow-up in the MVP — PRD BR-4).
 4. The primary buyer has a valid normalized phone.
+5. The buyer has given SMS/WhatsApp consent (`consent_sms = true`). A due item for a non-consenting buyer is never claimed and is logged as `SKIPPED` / "no_consent" if it would otherwise be eligible.
 
 For each eligible due item, the scheduler considers milestones `10, 7, 3, 0`. A milestone is **in range** if `today >= due_date - milestone` (PKT calendar dates).
 
@@ -1200,6 +1202,7 @@ for each eligible due item:
   if dry_run:        log SKIPPED / "dry_run";        continue
   if not configured: log SKIPPED / "not_configured"; continue
   if no valid phone: log SKIPPED / "no_phone";       continue
+  if not consent_sms: log SKIPPED / "no_consent";    continue
 
   claim = INSERT (due_item, milestone) ON CONFLICT DO NOTHING RETURNING id
   if claim is null: continue                                  # someone else won
@@ -1230,6 +1233,7 @@ for each eligible due item:
 | Dry run | No claim | `SKIPPED` + `dry_run` | N/A |
 | Not configured | No claim | `SKIPPED` + `not_configured` | N/A |
 | No phone | No claim | `SKIPPED` + `no_phone` | N/A |
+| No consent | No claim | `SKIPPED` + `no_consent` | N/A |
 | Paid / cancelled | No claim, no log | — | — |
 
 **The honest residual risk:** an SMS provider does not offer an idempotency key. If the process dies *after* the provider accepted the message but *before* the claim is updated, the system cannot know whether it was delivered. The architecture chooses **at-most-once** in that window: the claim is abandoned and not retried, and the row is surfaced in the Reminder Log as "outcome unknown." A rare missing reminder is preferable to a duplicate, which is the explicit PRD requirement (S-5). This is documented, tested, and accepted.
@@ -1259,7 +1263,7 @@ for each eligible due item:
 
 ### 10.9 Dry-run is the default
 
-- `REMINDER_MODE=dry_run` in `.env.example` and in every environment until the client explicitly flips it to `live` after credentials and consent are in place.
+- `REMINDER_MODE=dry_run` in `.env.example` and in every environment until the client explicitly flips it to `live` after provider credentials are configured and per-buyer consent is being captured (`consent_sms`, §10.5).
 - Dry-run renders the real message, evaluates the real schedule, writes `SKIPPED` log rows, and makes **no** network call and **no** claim. This means flipping to live later still sends the milestones that were only simulated.
 - The Settings screen shows a persistent banner: "Dry run — messages are logged, not sent." The Reminder Log shows `Skipped (dry run)` rows.
 - A **Send test message** action (Admin only) uses the configured provider if live, or logs the message if dry-run. It requires an explicit phone number and shows a confirmation.
@@ -1541,6 +1545,7 @@ Architecturally significant constraints (full DDL belongs to `DATABASE.md`):
 | One linked cash entry per payment | Unique `(linked_payment_id)` where not null |
 | Valid share percentages | `CHECK (share_pct > 0 AND share_pct <= 100)`; total 100 enforced in the service and checked nightly |
 | Immutable audit trail | Trigger blocking `UPDATE`/`DELETE` on `audit_log` |
+| Buyer consent is owned by Sales, read by Reminders | `consent_sms` / `consent_recorded_at` live on `buyer`; only the Sales write path may change them, and the change plus its audit row share one transaction. Reminders is read-only on this column and re-reads it at claim time (§10.5), so no module can message a non-consenting buyer. |
 | No hard deletes of financial rows | App role is not granted `DELETE` on financial tables (hardening) |
 
 ### 12.9 Nightly integrity checks
@@ -1836,7 +1841,7 @@ Deliberately minimal — no Prometheus/Grafana stack for one VPS.
 
 ### 14.10 Go-live and routine operations
 
-- Go-live runbook: restore/initialize DB, run migrations, create the Admin user, set company profile and terms text, import the master plan and either enter plot data manually or run the agreed one-off import script, enter the opening cash balance (Q-6), configure the provider in dry-run, then flip to live after consent.
+- Go-live runbook: restore/initialize DB, run migrations, create the Admin user, set company profile and terms text, import the master plan and either enter plot data manually or run the agreed one-off import script, enter the opening cash balance (Q-6), configure the provider in dry-run, and flip to live only once the buyers to be messaged have `consent_sms = true` (PRD US-3.2).
 - Routine: daily backup check (automated), weekly restore test (automated), monthly dependency updates (reviewed), quarterly secret rotation review.
 - `RUNBOOK.md` (next doc after `DATABASE.md`) holds the exact commands for deploy, rollback, restore, and incident triage.
 
@@ -1943,7 +1948,7 @@ The PRD requirements that create meaningful technical risk, with the architectur
 | R-10 | Reminder catch-up floods a buyer | Worker down for days, then several milestones eligible | One message per item per day: most urgent wins, others logged `superseded` (§10.5) | **Low.** |
 | R-11 | Editing a confirmed booking's price after payments exist | Ledger would no longer reconcile to the plan | Price-plan change is allowed only at zero payments (Q-1); otherwise cancel-and-rebook; server invariant | **Medium** (product), **low** (technical). Needs client sign-off. |
 | R-12 | Manual Roznamcha edits break report parity | Humans make mistakes; edits rewrite history | Void-only for cash entries (Q-2); correction = void + repost; both audited; reports read only posted rows | **Low.** |
-| R-13 | SMS consent / PTA compliance (Pakistan) | Unsolicited marketing rules; sender ID registration | Consent captured manually before live; dry-run default; client's provider account holds registrations (Q-11) | **Medium** (external), **low** (technical). |
+| R-13 | SMS consent / PTA compliance (Pakistan) | Unsolicited marketing rules; sender ID registration | Per-buyer `consent_sms` gate at claim time (§10.5) — non-consenting buyers are never messaged; dry-run default; the client's provider account holds the registrations | **Medium** (external), **low** (technical). |
 | R-14 | Backup exists but is unusable | Untested restores are common | Weekly automated restore test, checksum and row-count comparison, external heartbeat (§14.7) | **Low.** |
 | R-15 | Single VPS dies | No HA | 24 h RPO, 4 h RTO, documented restore; client accepts (A-11) | **Accepted.** |
 | R-16 | Urdu PDFs requested later | Renderer cannot shape Nastaliq/Naskh well | Scope excludes them (A-3); template boundary isolates a renderer swap (ADR-14) | **Low** now; a known future cost. |
@@ -2032,9 +2037,9 @@ Short form here; each becomes a file in `docs/adr/` with context, options, and c
 
 ## 19. Open questions
 
-These need a client decision. Each has a proposed default so work is not blocked; the default is what the code will do until told otherwise.
+All thirteen questions are **decided**. The table records the decision that the implementation follows; the **Impact if changed** column notes what a later reversal would touch. None of these is awaiting input.
 
-| # | Question | Proposed default | Impact if changed |
+| # | Question | Decided | Impact if changed |
 |---|---|---|---|
 | Q-1 | Can a confirmed booking's price or plan be edited? | Non-financial fields only; price/plan revision allowed only when no payment is posted, otherwise cancel and rebook | Ledger design, audit events, UI |
 | Q-2 | Can a cash entry be edited, or only voided? | Void only; correction = void + repost with a reason | Report parity, audit trail |
@@ -2046,7 +2051,7 @@ These need a client decision. Each has a proposed default so work is not blocked
 | Q-8 | Are reminder messages English-only? | Yes (matches PRD D-6 scope) | Template catalogs |
 | Q-9 | How is an offline refund recorded? | Manual Out entry with a "Refund" category, no payment link | Ledger semantics |
 | Q-10 | Data retention and residency requirements? | Keep business records indefinitely; data stays on the PK VPS; no field-level encryption | Compliance, storage |
-| Q-11 | How is SMS consent captured? | Manually by staff before go-live; recorded in buyer notes | Compliance, UI |
+| Q-11 | How is SMS consent captured? | A structured `consent_sms` boolean + `consent_recorded_at` timestamp on the buyer record, captured at buyer registration (per PRD US-3.2 / FR-4.2) and editable later by Admin/Accountant with an audit entry. Free-text notes are not used for this, so consent is enforceable, not just documented. | Compliance, UI, reminder eligibility (§10.5) |
 | Q-12 | What if a replacement master plan has a different aspect ratio? | Warn and require confirmation; existing polygons keep normalized coords and may shift | Map accuracy |
 | Q-13 | Multiple photos per buyer? | One current photo; replacing overwrites the reference, the old file is cleaned up | Storage, UI |
 
