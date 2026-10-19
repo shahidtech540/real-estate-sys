@@ -1,0 +1,22 @@
+# Keep the image build context to what the build actually reads.
+# (Not a security boundary; .env is never baked into the image — §14.5.)
+
+node_modules
+.next
+dist
+coverage
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+docs/adr
+README.md
+ARCHITECTURE.md
+DATABASE.md
+DESIGN.md
+PRD.md
+API.md
+AGENTS.md
+IMPLEMENTATION-PLAN.md

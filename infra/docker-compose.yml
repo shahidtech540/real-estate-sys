@@ -1,0 +1,74 @@
+# Production stack — ARCHITECTURE.md §14.2, copied verbatim.
+#
+# Run from this directory so Compose reads ./db/init and the deployment .env
+# that sits beside this file (ARCHITECTURE.md §14.5: `.env` on the server, 0600):
+#
+#   docker compose pull
+#   docker compose run --rm migrate
+#   docker compose up -d web worker
+#
+# Local development uses the root docker-compose.yml, which builds the image
+# instead of pulling ghcr.io/<org>/spm:${TAG}.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: spm
+      POSTGRES_USER: spm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD} # consumed by db/init/01-roles.sql
+      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD} # consumed by db/init/01-roles.sql
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro # creates spm_migrator + spm_app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spm -d spm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # no ports: reachable only on the compose network
+
+  web:
+    image: ghcr.io/<org>/spm:${TAG}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://spm_app:${APP_DB_PASSWORD}@db:5432/spm
+      APP_SECRETS_KEY: ${APP_SECRETS_KEY}
+      REMINDER_MODE: ${REMINDER_MODE}
+    volumes:
+      - /srv/spm/files:/srv/spm/files
+    ports:
+      - "127.0.0.1:3000:3000" # loopback only; host Nginx proxies to it
+    command: ["node", ".next/standalone/server.js"]
+
+  worker:
+    image: ghcr.io/<org>/spm:${TAG}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://spm_app:${APP_DB_PASSWORD}@db:5432/spm
+      APP_SECRETS_KEY: ${APP_SECRETS_KEY}
+      REMINDER_MODE: ${REMINDER_MODE}
+    volumes:
+      - /srv/spm/files:/srv/spm/files
+    command: ["node", "dist/worker/main.js"]
+
+  migrate:
+    image: ghcr.io/<org>/spm:${TAG}
+    profiles: ["tools"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://spm_migrator:${MIGRATOR_PASSWORD}@db:5432/spm
+    command: ["npx", "prisma", "migrate", "deploy"]
+
+volumes:
+  pgdata:

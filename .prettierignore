@@ -1,0 +1,13 @@
+# Prettier defaults are used verbatim (AGENTS.md AG-Q1); this file only keeps
+# generated and vendored output out of `format:check`.
+.next/
+node_modules/
+dist/
+coverage/
+package-lock.json
+prisma/migrations/
+# The seven source-of-truth documents are hand-authored prose, not code; they
+# are not reformatted by Prettier (AGENTS.md §2: PRs must not churn them).
+*.md
+playwright-report/
+test-results/

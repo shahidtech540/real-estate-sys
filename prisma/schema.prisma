@@ -1,0 +1,770 @@
+// Prisma schema for Society Plot Manager (SPM).
+//
+// Derived from DATABASE.md v1.0 — every model, column, type, nullability,
+// default, unique, index and foreign key below is a direct transcription of
+// DATABASE.md §3 (tables), §4 (18 enums) and §6.2 (Prisma-declared uniques).
+// Nothing here is invented; nothing documented is omitted.
+//
+// Type mapping is fixed by DATABASE.md §1.9:
+//   uuid     -> String @db.Uuid           timestamptz -> DateTime @db.Timestamptz(3)
+//   date     -> DateTime @db.Date         numeric     -> Decimal @db.Decimal(p,s)
+//   jsonb    -> Json                      smallint    -> Int @db.SmallInt
+//   char(n)  -> String @db.Char(n)        bigserial   -> BigInt @default(autoincrement())
+//   text     -> String                    varchar(n)  -> String @db.VarChar(n)
+//
+// Prisma does NOT own the following, and they are deliberately absent here
+// (DATABASE.md §1.8, §6, §10.1 — they arrive as hand-written migrations
+// 0002_sql_functions_sequence … 0008_seed_reference_data in Phase 1):
+//   • All 48 CHECK constraints (DATABASE.md §6.3)
+//   • Partial unique indexes: one_active_booking_per_plot, one_primary_buyer_per_booking
+//   • Partial scan indexes: ix_due_item_open, ix_reminder_claim_retry,
+//     ix_file_object_deleted, ix_job_run_running (DATABASE.md §6.1)
+//   • SQL-declared uniques (DATABASE.md §6.2): uq_booking_idempotency,
+//     uq_payment_idempotency, uq_company_singleton, uq_cash_entry_linked_payment,
+//     uq_reminder_claim_due_item_milestone, uq_cash_category_name
+//   • Triggers: trg_set_updated_at (14 tables), trg_audit_log_append_only,
+//     trg_payment_immutable, trg_cash_entry_immutable (DATABASE.md §6.4–§6.5)
+//   • spm_polygon_ok(), booking_ref_seq and the booking_ref column default (§6.6)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — DATABASE.md §4. Values and order are verbatim; renamed or removed
+// values are forbidden. Enum type names map to the snake_case SQL types (§1.1).
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  SALES_AGENT
+  ACCOUNTANT
+
+  @@map("user_role")
+}
+
+enum PreferredLanguage {
+  EN
+  UR
+
+  @@map("preferred_language")
+}
+
+enum PlotStatus {
+  AVAILABLE
+  RESERVED
+  BOOKED_TOKEN
+  SOLD_CONSTRUCTED
+
+  @@map("plot_status")
+}
+
+enum PlotType {
+  RESIDENTIAL
+  COMMERCIAL
+
+  @@map("plot_type")
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+
+  @@map("booking_status")
+}
+
+enum DueItemKind {
+  TOKEN
+  DOWN_PAYMENT
+  INSTALLMENT
+
+  @@map("due_item_kind")
+}
+
+enum DueItemStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+
+  @@map("due_item_status")
+}
+
+enum PaymentMethod {
+  CASH
+  CHEQUE
+  BANK_TRANSFER
+
+  @@map("payment_method")
+}
+
+enum PaymentStatus {
+  POSTED
+  VOIDED
+
+  @@map("payment_status")
+}
+
+enum CashDirection {
+  IN
+  OUT
+
+  @@map("cash_direction")
+}
+
+enum CashNature {
+  INCOME
+  EXPENSE
+  OPENING
+
+  @@map("cash_nature")
+}
+
+enum CashEntryStatus {
+  POSTED
+  VOIDED
+
+  @@map("cash_entry_status")
+}
+
+enum ReminderChannel {
+  SMS
+  WHATSAPP
+
+  @@map("reminder_channel")
+}
+
+enum ReminderClaimStatus {
+  SENDING
+  SENT
+  FAILED
+  ABANDONED
+
+  @@map("reminder_claim_status")
+}
+
+enum ReminderLogStatus {
+  SENT
+  FAILED
+  SKIPPED
+
+  @@map("reminder_log_status")
+}
+
+enum FileKind {
+  MASTER_PLAN
+  BUYER_PHOTO
+  COMPANY_LOGO
+
+  @@map("file_kind")
+}
+
+enum JobStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+
+  @@map("job_status")
+}
+
+enum InstallmentFrequency {
+  MONTHLY
+  QUARTERLY
+
+  @@map("installment_frequency")
+}
+
+// ---------------------------------------------------------------------------
+// Identity — DATABASE.md §3.1
+// ---------------------------------------------------------------------------
+
+model User {
+  id                 String            @id @default(uuid()) @db.Uuid
+  name               String
+  email              String            @unique(map: "uq_app_user_email")
+  phone              String?
+  role               UserRole
+  passwordHash       String            @map("password_hash")
+  isActive           Boolean           @default(true) @map("is_active")
+  mustChangePassword Boolean           @default(false) @map("must_change_password")
+  preferredLanguage  PreferredLanguage @default(EN) @map("preferred_language")
+  lastLoginAt        DateTime?         @map("last_login_at") @db.Timestamptz(3)
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions                Session[]
+  settingsUpdated         AppSetting[]           @relation("AppSettingUpdatedBy")
+  buyersCreated           Buyer[]                @relation("BuyerCreatedBy")
+  bookingsCreated         Booking[]              @relation("BookingCreatedBy")
+  bookingsCancelled       Booking[]              @relation("BookingCancelledBy")
+  plotStatusChanges       PlotStatusHistory[]    @relation("PlotHistoryActor")
+  bookingNotes            BookingNote[]
+  paymentsRecorded        Payment[]              @relation("PaymentRecordedBy")
+  paymentsVoided          Payment[]              @relation("PaymentVoidedBy")
+  cashEntriesRecorded     CashEntry[]            @relation("CashEntryRecordedBy")
+  cashEntriesVoided       CashEntry[]            @relation("CashEntryVoidedBy")
+  reminderTemplatesEdited ReminderTemplate[]     @relation("ReminderTemplateUpdatedBy")
+  providerConfigsEdited   ProviderConfig[]       @relation("ProviderConfigUpdatedBy")
+  filesUploaded           FileObject[]           @relation("FileObjectUploadedBy")
+  auditEntries            AuditLog[]             @relation("AuditLogActor")
+
+  @@index([role, isActive], map: "ix_app_user_role_active")
+  @@map("app_user")
+}
+
+model Session {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  tokenHash         String    @unique(map: "uq_session_token_hash") @map("token_hash") @db.Char(64)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt        DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  ip                String?   @db.VarChar(45)
+  userAgent         String?   @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId], map: "ix_session_user_id")
+  @@index([idleExpiresAt, absoluteExpiresAt], map: "ix_session_expiry")
+  @@map("session")
+}
+
+model LoginThrottle {
+  email         String    @id
+  failedCount   Int       @default(0) @map("failed_count") @db.SmallInt
+  firstFailedAt DateTime? @map("first_failed_at") @db.Timestamptz(3)
+  lastFailedAt  DateTime? @map("last_failed_at") @db.Timestamptz(3)
+  lockedUntil   DateTime? @map("locked_until") @db.Timestamptz(3)
+
+  @@index([lockedUntil], map: "ix_login_throttle_locked_until")
+  @@map("login_throttle")
+}
+
+// ---------------------------------------------------------------------------
+// Setup — DATABASE.md §3.2
+// ---------------------------------------------------------------------------
+
+model Company {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  logoFileId     String?  @map("logo_file_id") @db.Uuid
+  address        String?
+  phone          String?
+  email          String?
+  pdfTermsText   String?  @map("pdf_terms_text")
+  marlaSqft      Decimal  @default(225.00) @map("marla_sqft") @db.Decimal(10, 2)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  logoFile FileObject? @relation(fields: [logoFileId], references: [id], onDelete: SetNull)
+  projects Project[]
+
+  // uq_company_singleton — UNIQUE ((true)) — is hand-written SQL (DATABASE.md §6.2).
+  @@map("company")
+}
+
+model Project {
+  id                    String    @id @default(uuid()) @db.Uuid
+  companyId             String    @map("company_id") @db.Uuid
+  name                  String
+  location              String?
+  marlaSqft             Decimal?  @map("marla_sqft") @db.Decimal(10, 2)
+  masterPlanFileId      String?   @map("master_plan_file_id") @db.Uuid
+  masterPlanWidthPx     Int?      @map("master_plan_width_px")
+  masterPlanHeightPx    Int?      @map("master_plan_height_px")
+  masterPlanUploadedAt  DateTime? @map("master_plan_uploaded_at") @db.Timestamptz(3)
+  isActive              Boolean   @default(true) @map("is_active")
+  version               Int       @default(0)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  company        Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  masterPlanFile FileObject? @relation(fields: [masterPlanFileId], references: [id], onDelete: SetNull)
+  blocks         Block[]
+  plots          Plot[]
+
+  @@unique([companyId, name], map: "uq_project_company_name")
+  @@index([companyId, isActive], map: "ix_project_company_active")
+  @@map("project")
+}
+
+model Block {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  code      String
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  plots   Plot[]
+
+  @@unique([projectId, code], map: "uq_block_project_code")
+  @@index([projectId], map: "ix_block_project_id")
+  @@map("block")
+}
+
+model AppSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy   String?  @map("updated_by") @db.Uuid
+
+  updatedByUser User? @relation("AppSettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("app_setting")
+}
+
+// ---------------------------------------------------------------------------
+// Inventory — DATABASE.md §3.3
+// ---------------------------------------------------------------------------
+
+model Plot {
+  id             String     @id @default(uuid()) @db.Uuid
+  projectId      String     @map("project_id") @db.Uuid
+  blockId        String     @map("block_id") @db.Uuid
+  plotNumber     String     @map("plot_number")
+  plotType       PlotType   @default(RESIDENTIAL) @map("plot_type")
+  sizeMarla      Decimal    @map("size_marla") @db.Decimal(10, 2)
+  widthFt        Decimal?   @map("width_ft") @db.Decimal(10, 2)
+  depthFt        Decimal?   @map("depth_ft") @db.Decimal(10, 2)
+  dimensionsText String?    @map("dimensions_text")
+  pricePkr       Decimal    @map("price_pkr") @db.Decimal(12, 2)
+  status         PlotStatus @default(AVAILABLE)
+  polygon        Json?
+  notes          String?
+  isActive       Boolean    @default(true) @map("is_active")
+  version        Int        @default(0)
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  project Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  block   Block               @relation(fields: [blockId], references: [id], onDelete: Restrict)
+  history PlotStatusHistory[]
+  bookings Booking[]
+
+  @@unique([projectId, plotNumber], map: "uq_plot_project_number")
+  @@index([projectId, status], map: "ix_plot_project_status")
+  @@index([blockId], map: "ix_plot_block")
+  @@index([projectId, isActive], map: "ix_plot_project_active")
+  @@map("plot")
+}
+
+model PlotStatusHistory {
+  id          String     @id @default(uuid()) @db.Uuid
+  plotId      String     @map("plot_id") @db.Uuid
+  fromStatus  PlotStatus? @map("from_status")
+  toStatus    PlotStatus @map("to_status")
+  reason      String?
+  actorUserId String?    @map("actor_user_id") @db.Uuid
+  occurredAt  DateTime   @default(now()) @map("occurred_at") @db.Timestamptz(3)
+
+  plot  Plot  @relation(fields: [plotId], references: [id], onDelete: Restrict)
+  actor User? @relation("PlotHistoryActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([plotId, occurredAt(sort: Desc)], map: "ix_plot_status_history_plot")
+  @@map("plot_status_history")
+}
+
+// ---------------------------------------------------------------------------
+// Sales — DATABASE.md §3.4
+// ---------------------------------------------------------------------------
+
+model Buyer {
+  id                    String    @id @default(uuid()) @db.Uuid
+  fullName              String    @map("full_name")
+  fatherOrHusbandName   String?   @map("father_or_husband_name")
+  cnic                  String    @unique(map: "uq_buyer_cnic") @db.Char(15)
+  phone                 String    @db.VarChar(16)
+  address               String?
+  photoFileId           String?   @map("photo_file_id") @db.Uuid
+  consentSms            Boolean   @default(false) @map("consent_sms")
+  consentRecordedAt     DateTime? @map("consent_recorded_at") @db.Timestamptz(3)
+  version               Int       @default(0)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy             String    @map("created_by") @db.Uuid
+
+  photoFile    FileObject?    @relation(fields: [photoFileId], references: [id], onDelete: SetNull)
+  createdByUser User          @relation("BuyerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  bookings     Booking[]      @relation("BookingPrimaryBuyer")
+  bookingLinks BookingBuyer[]
+
+  @@index([phone], map: "ix_buyer_phone")
+  @@map("buyer")
+}
+
+model Booking {
+  id              String        @id @default(uuid()) @db.Uuid
+  // booking_ref default is ('BK-' || nextval('booking_ref_seq')) — hand-written
+  // SQL in 0002_sql_functions_sequence (DATABASE.md §6.6). Prisma does not own it.
+  bookingRef      String        @unique(map: "uq_booking_ref") @map("booking_ref")
+  plotId          String        @map("plot_id") @db.Uuid
+  bookingDate     DateTime      @map("booking_date") @db.Date
+  status          BookingStatus @default(CONFIRMED)
+  salePricePkr    Decimal       @map("sale_price_pkr") @db.Decimal(12, 2)
+  primaryBuyerId  String        @map("primary_buyer_id") @db.Uuid
+  createdBy       String        @map("created_by") @db.Uuid
+  clientRequestId String        @map("client_request_id") @db.Uuid
+  cancelReason    String?       @map("cancel_reason")
+  cancelledAt     DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  cancelledBy     String?       @map("cancelled_by") @db.Uuid
+  version         Int           @default(0)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plot              Plot               @relation(fields: [plotId], references: [id], onDelete: Restrict)
+  primaryBuyer      Buyer              @relation("BookingPrimaryBuyer", fields: [primaryBuyerId], references: [id], onDelete: Restrict)
+  createdByUser     User               @relation("BookingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  cancelledByUser   User?              @relation("BookingCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  plan              PaymentPlan?
+  buyers            BookingBuyer[]
+  notes             BookingNote[]
+  dueItems          DueItem[]
+  payments          Payment[]
+  auditEntries      AuditLog[]
+
+  // one_active_booking_per_plot (UNIQUE (plot_id) WHERE status = 'CONFIRMED')
+  // is a partial unique index — hand-written SQL (DATABASE.md §6.1).
+  // uq_booking_idempotency is SQL-declared (DATABASE.md §6.2).
+  @@index([plotId], map: "ix_booking_plot")
+  @@index([status, bookingDate(sort: Desc)], map: "ix_booking_status_date")
+  @@index([createdBy, createdAt(sort: Desc)], map: "ix_booking_created_by")
+  @@index([primaryBuyerId], map: "ix_booking_primary_buyer")
+  @@map("booking")
+}
+
+model PaymentPlan {
+  id                      String               @id @default(uuid()) @db.Uuid
+  bookingId               String               @unique(map: "uq_payment_plan_booking") @map("booking_id") @db.Uuid
+  tokenAmount             Decimal              @map("token_amount") @db.Decimal(12, 2)
+  downPaymentAmount       Decimal              @map("down_payment_amount") @db.Decimal(12, 2)
+  downPaymentDueDate      DateTime             @map("down_payment_due_date") @db.Date
+  balanceAmount           Decimal              @map("balance_amount") @db.Decimal(12, 2)
+  installmentCount        Int                  @map("installment_count") @db.SmallInt
+  installmentBaseAmount   Decimal              @map("installment_base_amount") @db.Decimal(12, 2)
+  frequency               InstallmentFrequency
+  firstDueDate            DateTime             @map("first_due_date") @db.Date
+  createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  @@map("payment_plan")
+}
+
+model BookingBuyer {
+  bookingId String   @map("booking_id") @db.Uuid
+  buyerId   String   @map("buyer_id") @db.Uuid
+  sharePct  Decimal  @map("share_pct") @db.Decimal(5, 2)
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  buyer   Buyer   @relation(fields: [buyerId], references: [id], onDelete: Restrict)
+
+  @@id([bookingId, buyerId])
+  // one_primary_buyer_per_booking (UNIQUE (booking_id) WHERE is_primary) is a
+  // partial unique index — hand-written SQL (DATABASE.md §6.1).
+  @@index([buyerId], map: "ix_booking_buyer_buyer")
+  @@map("booking_buyer")
+}
+
+model BookingNote {
+  id           String   @id @default(uuid()) @db.Uuid
+  bookingId    String   @map("booking_id") @db.Uuid
+  authorUserId String   @map("author_user_id") @db.Uuid
+  body         String
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  author  User    @relation(fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId, createdAt(sort: Desc)], map: "ix_booking_note_booking")
+  @@map("booking_note")
+}
+
+model DueItem {
+  id         String        @id @default(uuid()) @db.Uuid
+  bookingId  String        @map("booking_id") @db.Uuid
+  kind       DueItemKind
+  sequence   Int           @db.SmallInt
+  label      String
+  dueDate    DateTime      @map("due_date") @db.Date
+  amount     Decimal       @db.Decimal(12, 2)
+  amountPaid Decimal       @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  status     DueItemStatus @default(PENDING)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  booking     Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  allocations PaymentAllocation[]
+  claims      ReminderClaim[]
+  reminderLogs ReminderLog[]
+
+  @@unique([bookingId, sequence], map: "uq_due_item_booking_sequence")
+  // ix_due_item_open (due_date) WHERE status <> 'PAID' is a partial index —
+  // hand-written SQL (DATABASE.md §6.1).
+  @@map("due_item")
+}
+
+// ---------------------------------------------------------------------------
+// Ledger — DATABASE.md §3.5
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id              String        @id @default(uuid()) @db.Uuid
+  bookingId       String        @map("booking_id") @db.Uuid
+  paidOn          DateTime      @map("paid_on") @db.Date
+  amount          Decimal       @db.Decimal(12, 2)
+  method          PaymentMethod
+  reference       String?
+  notes           String?
+  status          PaymentStatus @default(POSTED)
+  recordedBy      String        @map("recorded_by") @db.Uuid
+  clientRequestId String        @map("client_request_id") @db.Uuid
+  voidReason      String?       @map("void_reason")
+  voidedAt        DateTime?     @map("voided_at") @db.Timestamptz(3)
+  voidedBy        String?       @map("voided_by") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  booking        Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  recordedByUser User                @relation("PaymentRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
+  voidedByUser   User?               @relation("PaymentVoidedBy", fields: [voidedBy], references: [id], onDelete: Restrict)
+  allocations    PaymentAllocation[]
+  cashEntries    CashEntry[]
+
+  // uq_payment_idempotency is SQL-declared (DATABASE.md §6.2).
+  // No updated_at by design: only the void transition may change a row (§3.5).
+  @@index([bookingId, paidOn(sort: Desc), id(sort: Desc)], map: "ix_payment_booking")
+  @@index([status, paidOn], map: "ix_payment_status_date")
+  @@index([recordedBy, createdAt(sort: Desc)], map: "ix_payment_recorded_by")
+  @@map("payment")
+}
+
+model PaymentAllocation {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @map("payment_id") @db.Uuid
+  dueItemId String   @map("due_item_id") @db.Uuid
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  dueItem DueItem @relation(fields: [dueItemId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, dueItemId], map: "uq_allocation_pair")
+  @@index([dueItemId], map: "ix_allocation_due_item")
+  @@map("payment_allocation")
+}
+
+// ---------------------------------------------------------------------------
+// Cashbook — DATABASE.md §3.6
+// ---------------------------------------------------------------------------
+
+model CashCategory {
+  id        String     @id @default(uuid()) @db.Uuid
+  name      String
+  nature    CashNature
+  isActive  Boolean    @default(true) @map("is_active")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  entries CashEntry[]
+
+  // uq_cash_category_name (UNIQUE (lower(name))) is SQL-declared (DATABASE.md §6.2).
+  @@index([isActive, nature], map: "ix_cash_category_active")
+  @@map("cash_category")
+}
+
+model CashEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  entryDate       DateTime        @map("entry_date") @db.Date
+  direction       CashDirection
+  cashCategoryId  String          @map("cash_category_id") @db.Uuid
+  amount          Decimal         @db.Decimal(12, 2)
+  description     String
+  linkedPaymentId String?         @map("linked_payment_id") @db.Uuid
+  recordedBy      String          @map("recorded_by") @db.Uuid
+  status          CashEntryStatus @default(POSTED)
+  voidReason      String?         @map("void_reason")
+  voidedAt        DateTime?       @map("voided_at") @db.Timestamptz(3)
+  voidedBy        String?         @map("voided_by") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  cashCategory     CashCategory @relation(fields: [cashCategoryId], references: [id], onDelete: Restrict)
+  linkedPayment    Payment?     @relation(fields: [linkedPaymentId], references: [id], onDelete: Restrict)
+  recordedByUser   User         @relation("CashEntryRecordedBy", fields: [recordedBy], references: [id], onDelete: Restrict)
+  voidedByUser     User?        @relation("CashEntryVoidedBy", fields: [voidedBy], references: [id], onDelete: Restrict)
+
+  // uq_cash_entry_linked_payment (UNIQUE (linked_payment_id) WHERE NOT NULL) is
+  // a partial unique index — hand-written SQL (DATABASE.md §6.2).
+  @@index([entryDate, id], map: "ix_cash_entry_date")
+  @@index([cashCategoryId, entryDate], map: "ix_cash_entry_category")
+  @@index([status, entryDate], map: "ix_cash_entry_status")
+  @@map("cash_entry")
+}
+
+// ---------------------------------------------------------------------------
+// Reminders — DATABASE.md §3.7
+// ---------------------------------------------------------------------------
+
+model ReminderTemplate {
+  id        String          @id @default(uuid()) @db.Uuid
+  channel   ReminderChannel
+  milestone Int             @db.SmallInt
+  body      String
+  isActive  Boolean         @default(true) @map("is_active")
+  updatedBy String?         @map("updated_by") @db.Uuid
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updatedByUser User? @relation("ReminderTemplateUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([channel, milestone], map: "uq_reminder_template_channel_milestone")
+  @@map("reminder_template")
+}
+
+model ProviderConfig {
+  id                  String          @id @default(uuid()) @db.Uuid
+  channel             ReminderChannel @unique(map: "uq_provider_config_channel")
+  providerName        String          @default("dry-run") @map("provider_name")
+  isEnabled           Boolean         @default(true) @map("is_enabled")
+  isLive              Boolean         @default(false) @map("is_live")
+  apiBaseUrl          String?         @map("api_base_url")
+  senderId            String?         @map("sender_id")
+  secretCiphertext    String?         @map("secret_ciphertext")
+  waTemplateName      String?         @map("wa_template_name")
+  waTemplateLanguage  String?         @map("wa_template_language")
+  waTemplateVariables Json?           @map("wa_template_variables")
+  updatedBy           String?         @map("updated_by") @db.Uuid
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updatedByUser User? @relation("ProviderConfigUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("provider_config")
+}
+
+model ReminderClaim {
+  id            String              @id @default(uuid()) @db.Uuid
+  dueItemId     String              @map("due_item_id") @db.Uuid
+  milestone     Int                 @db.SmallInt
+  channel       ReminderChannel
+  status        ReminderClaimStatus @default(SENDING)
+  attempts      Int                 @default(0) @db.SmallInt
+  lastAttemptAt DateTime?           @map("last_attempt_at") @db.Timestamptz(3)
+  nextAttemptAt DateTime?           @map("next_attempt_at") @db.Timestamptz(3)
+  claimedAt     DateTime            @default(now()) @map("claimed_at") @db.Timestamptz(3)
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  dueItem DueItem       @relation(fields: [dueItemId], references: [id], onDelete: Restrict)
+  logs    ReminderLog[]
+
+  // uq_reminder_claim_due_item_milestone is SQL-declared (DATABASE.md §6.2) —
+  // it is the constraint that makes PRD S-5 true.
+  // ix_reminder_claim_retry is a partial index — hand-written SQL (§6.1).
+  @@map("reminder_claim")
+}
+
+model ReminderLog {
+  id             String            @id @default(uuid()) @db.Uuid
+  dueItemId      String            @map("due_item_id") @db.Uuid
+  claimId        String?           @map("claim_id") @db.Uuid
+  channel        ReminderChannel
+  milestone      Int               @db.SmallInt
+  attempt        Int               @default(1) @db.SmallInt
+  status         ReminderLogStatus
+  reason         String?
+  recipientPhone String?           @map("recipient_phone") @db.VarChar(16)
+  renderedBody   String?           @map("rendered_body")
+  providerRef    String?           @map("provider_ref")
+  errorMessage   String?           @map("error_message")
+  attemptedAt    DateTime          @default(now()) @map("attempted_at") @db.Timestamptz(3)
+
+  dueItem DueItem        @relation(fields: [dueItemId], references: [id], onDelete: Restrict)
+  claim   ReminderClaim? @relation(fields: [claimId], references: [id], onDelete: Restrict)
+
+  @@index([dueItemId, attemptedAt(sort: Desc)], map: "ix_reminder_log_due_item")
+  @@index([status, attemptedAt(sort: Desc)], map: "ix_reminder_log_status_time")
+  @@map("reminder_log")
+}
+
+// ---------------------------------------------------------------------------
+// Audit — DATABASE.md §3.10
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  occurredAt  DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actorLabel  String   @map("actor_label")
+  actionCode  String   @map("action_code")
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id") @db.Uuid
+  bookingId   String?  @map("booking_id") @db.Uuid
+  summary     Json     @default("{}") @db.JsonB
+  requestId   String?  @map("request_id")
+  ip          String?  @db.VarChar(45)
+
+  actor   User?   @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  // Append-only via trg_audit_log_append_only and grants (DATABASE.md §6.4, §8.3).
+  @@index([occurredAt(sort: Desc), id(sort: Desc)], map: "ix_audit_log_time")
+  @@index([bookingId, occurredAt(sort: Desc)], map: "ix_audit_log_booking")
+  @@index([actorUserId, occurredAt(sort: Desc)], map: "ix_audit_log_actor")
+  @@index([entityType, entityId, occurredAt(sort: Desc)], map: "ix_audit_log_entity")
+  @@index([actionCode, occurredAt(sort: Desc)], map: "ix_audit_log_action")
+  @@map("audit_log")
+}
+
+// ---------------------------------------------------------------------------
+// Core (shared) — DATABASE.md §3.11
+// ---------------------------------------------------------------------------
+
+model FileObject {
+  id               String    @id @default(uuid()) @db.Uuid
+  kind             FileKind
+  storageKey       String    @unique(map: "uq_file_object_storage_key") @map("storage_key")
+  originalFilename String    @map("original_filename")
+  mimeType         String    @map("mime_type")
+  byteSize         BigInt    @map("byte_size")
+  sha256           String    @db.Char(64)
+  widthPx          Int?      @map("width_px")
+  heightPx         Int?      @map("height_px")
+  uploadedBy       String?   @map("uploaded_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  uploadedByUser User?     @relation("FileObjectUploadedBy", fields: [uploadedBy], references: [id], onDelete: SetNull)
+  companies      Company[]
+  projects       Project[]
+  buyers         Buyer[]
+
+  // ix_file_object_deleted is a partial index — hand-written SQL (DATABASE.md §6.1).
+  @@index([kind, createdAt(sort: Desc)], map: "ix_file_object_kind")
+  @@map("file_object")
+}
+
+model JobRun {
+  id           String    @id @default(uuid()) @db.Uuid
+  jobName      String    @map("job_name")
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt   DateTime? @map("finished_at") @db.Timestamptz(3)
+  status       JobStatus @default(RUNNING)
+  triggeredBy  String    @default("cron") @map("triggered_by")
+  summary      Json?
+  errorMessage String?   @map("error_message")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // ix_job_run_running is a partial index — hand-written SQL (DATABASE.md §6.1).
+  @@index([jobName, startedAt(sort: Desc)], map: "ix_job_run_name_time")
+  @@map("job_run")
+}

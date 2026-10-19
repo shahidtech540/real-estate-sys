@@ -1,0 +1,55 @@
+# Step 8 CI gate: install → typecheck → lint → prisma validate.
+#
+# Deliberately no test step yet: there are no tests in the scaffold, and
+# IMPLEMENTATION-PLAN.md assigns the first unit/integration/E2E work to Phase 1.
+# The full pipeline described in ARCHITECTURE.md §14.3 is added phase by phase.
+#
+# Node 24 matches ARCHITECTURE.md §3.1 and `engines` in package.json.
+# `npm ci` matches ARCHITECTURE.md §3.6 ("use npm ci in CI and Docker").
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Install, typecheck, lint, prisma validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # `prisma validate` only checks that a datasource URL is resolvable.
+      # Nothing connects; this is not a secret (ARCHITECTURE.md §14.5).
+      DATABASE_URL: postgresql://spm_app:ci@localhost:5432/spm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate Prisma schema
+        run: npx prisma validate

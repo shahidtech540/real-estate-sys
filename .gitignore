@@ -1,3 +1,26 @@
 node_modules/
-.env
 .next/
+
+# Build output
+dist/
+out/
+coverage/
+*.tsbuildinfo
+
+# Tests
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Environment files (never commit real secrets — ARCHITECTURE.md §14.5)
+.env
+.env.*
+!.env.example
+
+# Local data, logs, editor noise
+.data/
+*.log
+.DS_Store
+.idea/
+.vscode/

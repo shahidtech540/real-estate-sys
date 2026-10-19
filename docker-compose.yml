@@ -1,0 +1,94 @@
+# Local development stack — ARCHITECTURE.md §14.2 with `build:` instead of a
+# registry image, so the scaffold can run before CI has published one.
+#
+# Production uses infra/docker-compose.yml, which is §14.2 verbatim.
+# One Postgres database, one Docker image, two processes (web + worker):
+# `web` and `worker` share the same build and differ only in `command`.
+#
+#   cp .env.example .env      # fill in placeholders
+#   docker compose up -d --build
+#   docker compose run --rm migrate     # after the first build
+#   open http://127.0.0.1:3000
+#
+# `db` publishes no port (ARCHITECTURE.md §14.1). Use
+# `docker compose exec db psql -U spm -d spm` for a shell.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: spm
+      POSTGRES_USER: spm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD:?set MIGRATOR_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spm -d spm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # no ports: reachable only on the compose network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: spm:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://spm_app:${APP_DB_PASSWORD}@db:5432/spm
+      APP_SECRETS_KEY: ${APP_SECRETS_KEY:?set APP_SECRETS_KEY in .env}
+      REMINDER_MODE: ${REMINDER_MODE:-dry_run}
+      # Keys from AGENTS.md AG-Q4 that the web process will read from Phase 1.
+      HEALTH_DETAILS_TOKEN: ${HEALTH_DETAILS_TOKEN:-}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      SESSION_ABSOLUTE_HOURS: ${SESSION_ABSOLUTE_HOURS:-12}
+      PKT_TZ: ${PKT_TZ:-Asia/Karachi}
+    volumes:
+      # Named volume locally; production binds /srv/spm/files (§14.2).
+      - files:/srv/spm/files
+    ports:
+      - "127.0.0.1:3000:3000" # loopback only; host Nginx proxies to it (§14.2)
+    command: ["node", ".next/standalone/server.js"]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: spm:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://spm_app:${APP_DB_PASSWORD}@db:5432/spm
+      APP_SECRETS_KEY: ${APP_SECRETS_KEY:?set APP_SECRETS_KEY in .env}
+      REMINDER_MODE: ${REMINDER_MODE:-dry_run}
+      PKT_TZ: ${PKT_TZ:-Asia/Karachi}
+    volumes:
+      - files:/srv/spm/files
+    command: ["node", "dist/worker/main.js"]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: spm:local
+    profiles: ["tools"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://spm_migrator:${MIGRATOR_PASSWORD}@db:5432/spm
+    command: ["npx", "prisma", "migrate", "deploy"]
+
+volumes:
+  pgdata:
+  files:
