@@ -120,14 +120,6 @@ export async function refreshSession(
   };
 }
 
-export async function revokeByToken(
-  client: Db,
-  token: string | undefined,
-): Promise<void> {
-  if (!token) return;
-  await repo.deleteSessionByTokenHash(client, hashSessionToken(token));
-}
-
 /**
  * Password change, reset, deactivation and role change revoke immediately
  * (`ARCHITECTURE.md` §6.1). Password change keeps the acting session.
