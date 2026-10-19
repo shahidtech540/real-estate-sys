@@ -111,7 +111,7 @@ describe.skipIf(!databaseUrl)("login flow (integration)", () => {
 
     const tokens = await prisma.session.findMany({ where: { userId } });
     expect(tokens).toHaveLength(1);
-    const stored = tokens[0]!;
+    const stored = tokens[0];
     expect(stored.tokenHash).toBe(
       // SHA-256 hex of the raw token; the token itself is never stored.
       (await import("node:crypto"))
