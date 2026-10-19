@@ -1,5 +1,56 @@
 /*
- * Tailwind entry point (ARCHITECTURE.md §3.1). DESIGN.md §4 tokens are added to
- * this file in Phase 1, when the design-system layer starts.
+ * Tailwind entry point (ARCHITECTURE.md §3.1) plus the DESIGN.md §4 tokens.
+ *
+ * Tokens are declared once here as CSS custom properties and exposed to
+ * Tailwind through `@theme`, so components use `bg-primary-900`, `text-ink-500`
+ * and never a raw hex (DESIGN.md §4, AGENTS.md §5.11).
  */
 @import "tailwindcss";
+
+@theme {
+  --color-ink-900: #111827;
+  --color-ink-700: #374151;
+  --color-ink-500: #6b7280;
+  --color-ink-400: #9ca3af;
+  --color-line: #e5e7eb;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f9fafb;
+  --color-surface-hover: #f3f4f6;
+
+  --color-primary-50: #eef4fa;
+  --color-primary-100: #d6e4f2;
+  --color-primary-600: #1f4e8c;
+  --color-primary-700: #173d70;
+  --color-primary-900: #0b213b;
+
+  --color-danger-50: #fee2e2;
+  --color-danger-600: #b91c1c;
+  --color-success-50: #dcfce7;
+  --color-success-700: #15803d;
+  --color-warning-50: #fef3c7;
+  --color-warning-700: #b45309;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --font-sans:
+    Inter, "Noto Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-surface-sunken);
+  color: var(--color-ink-700);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* DESIGN.md §4.1/§12.4 — tabular numerals; Latin digits in both languages. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}

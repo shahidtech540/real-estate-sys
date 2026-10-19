@@ -9,6 +9,12 @@ const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  /**
+   * Native and ESM-only packages must stay outside the server bundle:
+   * `@node-rs/argon2` (native addon, ARCHITECTURE.md §6.1), `sharp` (native
+   * image pipeline, §7.3) and `file-type` (ESM, §7.3).
+   */
+  serverExternalPackages: ["@node-rs/argon2", "sharp", "file-type"],
 };
 
 export default nextConfig;
