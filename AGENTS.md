@@ -420,7 +420,15 @@ RETURNING version
 
 - Never invent an endpoint, table, column, enum value, capability, status code, error code, report metric, reminder channel, audit event or validation rule. If it is not in the four documents, it does not exist.
 - Never expose an endpoint that is not one of the 81 in `API.md` §2–§3; never implement fewer than the ones your feature needs.
-- Never add product scope from `PRD.md` §4 (out of scope) or `ARCHITECTURE.md` §6.5: no public API, buyer portal, webhooks, GraphQL, offline sync, bulk import, online payments, stored PDFs, manual reminder resend, overdue reminders, applying advance credit, 2FA/SSO, multi-tenancy, real-time collaboration.
+- Never add scope the documents exclude:
+  - No public API, buyer portal, webhooks, GraphQL, offline sync, bulk import — `PRD.md` §4.
+  - No online payments — `PRD.md` §4, `ARCHITECTURE.md` §1.2 (C-12).
+  - No stored PDFs (generated on demand only, never persisted) — `ARCHITECTURE.md` §8.1.
+  - No manual reminder resend, no overdue-reminder follow-up beyond T-0 — `ARCHITECTURE.md` §10.13.
+  - No applying advance credit automatically to future dues — `API.md` §7 (API-Q3).
+  - No two-factor authentication, no SSO — `ARCHITECTURE.md` §6.5.
+  - No multi-tenancy — `ARCHITECTURE.md` §1.2 (C-1) and §1.4.
+  - No real-time collaboration (no WebSockets) — `ARCHITECTURE.md` §0 and §3.3.
 - Never invent a UI screen that is not in `PRD.md` §11 / `DESIGN.md` §13.
 
 **Rules and guards**
