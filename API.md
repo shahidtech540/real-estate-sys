@@ -20,13 +20,13 @@ This document adds **no** product behavior, tables or columns. Every field below
 | **Endpoints** | **81**: 5 auth (Identity's surface, §2) + 76 across the 12 modules of `ARCHITECTURE.md` §4.2 (§3), all listed with an ID (`AUTH-1` … `COR-4`) |
 | **Base URL** | `/api` on the application origin (e.g. `https://spm.example.pk/api`); no separate API host |
 | **Auth model** | Email + password → opaque 32-byte token in the `__Host-spm_session` cookie; **SHA-256 hash** stored in `session`; 30-minute idle / 12-hour absolute expiry; server-side revocation (`ARCHITECTURE.md` §6.1) |
-| **Authorization** | Exactly three roles (`ADMIN`, `SALES_AGENT`, `ACCOUNTANT`) mapped to **23 capabilities** in one table (`ARCHITECTURE.md` §6.2). Every endpoint names its capability, with one documented exception (consent, API-Q1); the role never comes from the request |
+| **Authorization** | Exactly three roles (`ADMIN`, `SALES_AGENT`, `ACCOUNTANT`) mapped to **24 capabilities** in one table (`ARCHITECTURE.md` §6.2). Every endpoint names its capability; the role never comes from the request |
 | **Versioning** | **No URL version in the MVP.** One consumer, deployed from the same image (`ARCHITECTURE.md` §0, §3.2); additive changes only. A breaking change gets `/api/v2` and a coordinated frontend release — there is no third party to keep compatible |
 | **Format** | JSON, UTF-8. Money, areas and percentages are **decimal strings**; dates are `YYYY-MM-DD`; timestamps are ISO-8601 UTC (`ARCHITECTURE.md` §12.6, §12.7, Appendix C) |
 | **Errors** | One envelope for every failure: `{ "error": { "code", "message", "requestId", "fields" } }` (`ARCHITECTURE.md` Appendix A) |
 | **Pagination** | **Offset** (`page`, `pageSize`, `total`) — §1.5 justifies it against `DATABASE.md` §7.2's actual query shapes |
 | **Idempotency** | `clientRequestId` (UUID) in the body of the two money-moving creates: confirm booking and record payment (`ARCHITECTURE.md` §12.5). Replay → `200` + `Idempotent-Replay: true` |
-| **Optimistic locking** | `version` in the body of every edit to `plot`, `buyer`, `booking`, `project`; `409 CONFLICT_STALE_WRITE` (`DATABASE.md` §1.7) |
+| **Optimistic locking** | `version` on every edit to `plot`, `buyer`, `booking`, `project` (body; `?version=` for INV-8); `409 CONFLICT_STALE_WRITE` (`DATABASE.md` §1.7) |
 | **Localization** | The API is **language-neutral**: stable enum values and error codes, never translated sentences. The EN/UR toggle is a client concern (`ARCHITECTURE.md` §9). PDFs are English-only (PRD A-3) |
 | **Rate limits** | Login per IP (Nginx) and per account (Postgres); the four heavy endpoints are limited per user (§6) |
 | **Not in this API** | Public registration, OAuth, API keys, CORS, bulk import, stored PDFs, manual reminder resend, overdue reminders, applying advance credit (§7, API-Q3) |
@@ -971,7 +971,7 @@ The six visual steps — plot select → price → buyers → plan → review �
 
 #### SAL-5 · `PATCH /api/buyers/{id}/consent`
 
-**Roles:** Admin, Accountant · `buyer.consent` — **not in the §6.2 matrix; see §7, API-Q1**. PRD FR-4.2 and `ARCHITECTURE.md` §5.4 both assign consent changes to Admin/Accountant; the matrix omits the row. The endpoint follows the behavior documents and the gap is flagged, not hidden.
+**Roles:** Admin, Accountant · `buyer.consent` (PRD FR-4.2; `ARCHITECTURE.md` §6.2, §5.4).
 **Body:** `{ "consentSms": false, "version": 4 }`.
 **200** — `Buyer` with the new `consentRecordedAt`.
 **409 `CONFLICT_STALE_WRITE`**.
@@ -1057,7 +1057,7 @@ Each `buyers[]` entry is **either** `buyerId` (an existing buyer) **or** `buyer`
 **409 `CONFLICT_STALE_WRITE`**.
 **404 `BOOKING_NOT_FOUND`**.
 **DB:** compare-and-swap on `booking.version`; `audit_log` `booking.updated`.
-**Notes:** only the business date is editable post-confirm. **Price and plan revision is deliberately not exposed** — `DATABASE.md` §1.6 makes `due_item.amount` immutable and `payment_plan` a snapshot, so Q-1's zero-payment revision has no legal write path. The supported correction is cancel-and-rebook (Q-1's own fallback). Flagged in §7, API-Q2.
+**Notes:** only the business date is editable post-confirm. **Price and plan revision is deliberately not exposed** — `DATABASE.md` §1.6 makes `payment_plan` a snapshot and `due_item.amount` immutable, so there is no legal write path. The supported correction is cancel-and-rebook (`ARCHITECTURE.md` §19 Q-1). Resolved as §7, API-Q2.
 
 #### SAL-10 · `PUT /api/bookings/{ref}/buyers`
 
@@ -1069,7 +1069,7 @@ Each `buyers[]` entry is **either** `buyerId` (an existing buyer) **or** `buyer`
 **409 `CONFLICT_STALE_WRITE`** / **`BOOKING_ALREADY_CANCELLED`**.
 **404 `BOOKING_NOT_FOUND`** / **`BUYER_NOT_FOUND`**.
 **DB:** inside one transaction: `DELETE FROM booking_buyer WHERE booking_id = …` then insert the new set (the **only** delete path on that table, permitted by `DATABASE.md` §8.3); update `booking.primary_buyer_id`, `version + 1`; insert any new buyers; `audit_log` `booking.buyers_changed` with buyer ids and shares.
-**Notes:** this is the non-financial Q-1 edit that the schema does support. The zero-payment guard is the API's addition because changing owners after receipts would make the ledger's counterparty ambiguous; it is recorded in §7, API-Q2.
+**Notes:** this is the only post-confirm ownership edit the schema supports: replacing the buyer set while zero payments are posted. The zero-payment guard keeps the ledger's counterparty unambiguous; it is recorded as resolved in §7, API-Q2.
 
 #### SAL-11 · `POST /api/bookings/{ref}/cancel`
 
@@ -1598,23 +1598,23 @@ Platform services: files and job health (`DATABASE.md` §3.11). Files are privat
 | V-7 | SAL-6, SAL-10 | A cancelled booking cannot receive a new buyer set; a sold plot cannot be cancelled. | `409 BOOKING_ALREADY_CANCELLED` / `BOOKING_NOT_CANCELLABLE` |
 | V-8 | SAL-2, SAL-4 | CNIC is normalized to `NNNNN-NNNNNNN-N` (digits, dashes inserted) before validation and uniqueness; phone is E.164 (`^\+[1-9]\d{7,14}$`, DQ-14). A CNIC correction requires `cnicChangeReason` and is audited with field names only. | `400 VALIDATION_FAILED` / `422 CNIC_REASON_REQUIRED` / `409 CNIC_IN_USE` |
 | V-9 | SAL-2, SAL-6, SAL-10 | `consentSms` is required at buyer registration and may be changed only through SAL-5. `consent_recorded_at` is **always** set by the server to `now()`; the client can neither supply nor backdate it. | `400 VALIDATION_FAILED` |
-| V-10 | INV-3, INV-5, INV-7 | Plot number trimmed and upper-cased; unique **per project**, independent of block. A plot's `blockId` must belong to the project that owns it; `projectId` is derived from the block, never accepted. | `409 PLOT_NUMBER_EXISTS` / `422 BLOCK_PROJECT_MISMATCH` |
+| V-10 | INV-3, INV-5 | Plot number trimmed and upper-cased; unique **per project**, independent of block. A plot's `blockId` must belong to the project that owns it; `projectId` is derived from the block, never accepted. `422 BLOCK_PROJECT_MISMATCH` applies to INV-5 only; INV-3 derives the project from the block. | `409 PLOT_NUMBER_EXISTS` / `422 BLOCK_PROJECT_MISMATCH` |
 | V-11 | INV-3, INV-7 | Polygon: array of ≥3 `[x,y]` pairs, every coordinate a number in `[0,1]`, non-zero area. Same rule as `spm_polygon_ok` so the API error arrives before the constraint. | `422 POLYGON_INVALID` |
 | V-12 | SET-7 | A replacement master plan whose aspect ratio differs from the stored one by more than **0.5%** requires `confirmAspectRatioChange: true`; the UI warns that existing normalized polygons will distort (`ARCHITECTURE.md` §7.3, Q-12). | `422 MASTER_PLAN_ASPECT_CHANGED` |
 | V-13 | COR-1 | Size and magic-byte allowlist **per kind**: plan 25 MB JPG/PNG/WebP; logo 2 MB PNG/JPG/WebP; photo 5 MB JPG/PNG. Client filename/extension/MIME are advisory. Decode with a pixel cap to stop bombs. | `413 FILE_TOO_LARGE` / `415 FILE_TYPE_UNSUPPORTED` / `422 FILE_UNREADABLE` |
 | V-14 | SET-2, SET-7, SAL-2, SAL-4 | A referenced file must exist, not be soft-deleted, and have the **kind** the binding expects (logo/plan/photo). | `422 FILE_KIND_MISMATCH` / `404 FILE_NOT_FOUND` |
 | V-15 | LED-3 | Explicit allocations: each `> 0`, each `≤ dueItem.remaining`, one row per due item, sum `≤ payment.amount`. Omitted allocations are chosen oldest-unpaid-first under the booking lock. Overpayment beyond all allocations is legal advance credit. | `422 ALLOCATION_*` / `DUPLICATE_ALLOCATION` |
 | V-16 | LED-3 | A payment can only be recorded on a `CONFIRMED` booking; a cancelled booking has no payable ledger. | `409 BOOKING_NOT_PAYABLE` |
-| V-17 | SAL-11, LED-5, CSH-3 | A void/cancel reason is required, trimmed, 3–500 characters, plain text (rendered as text, never HTML). A second void/cancel is `409`, never a silent success. | `422 VALIDATION_FAILED` / `409 *_ALREADY_*` |
-| V-18 | INV-5, SAL-4, SAL-9, SET-6, SAL-5 | `version` is required on every edit to `plot`/`buyer`/`booking`/`project`; it must equal the stored value. | `409 CONFLICT_STALE_WRITE` |
+| V-17 | SAL-11, LED-5, CSH-3 | A void/cancel reason is required, trimmed, 3–500 characters, plain text (rendered as text, never HTML). A missing or blank reason is a shape error. A second void/cancel is `409`, never a silent success. | `400 VALIDATION_FAILED` / `409 *_ALREADY_*` |
+| V-18 | INV-5, INV-7, INV-8, SAL-4, SAL-5, SAL-9, SAL-10, SET-6, SET-7 | `version` is required on every edit to `plot`/`buyer`/`booking`/`project` (body, except INV-8's `?version=` query parameter); it must equal the stored value. | `409 CONFLICT_STALE_WRITE` |
 | V-19 | SET-2, SET-4, SET-6, INV-3, INV-5 | `marlaSqft > 0` when present; `sizeMarla > 0`; `pricePkr ≥ 0` on a plot and `> 0` on a booking; `widthFt`/`depthFt` either both absent or both positive. A malformed number is `400`; a well-formed zero/negative is `422`. | `400` / `422 VALIDATION_FAILED` |
 | V-20 | CSH-2, CSH-6 | Direction must match category nature (`INCOME`/`OPENING` → `IN`, `EXPENSE` → `OUT`); an inactive category cannot be used for a new entry; `nature` cannot change while entries reference the category. | `422 CASH_NATURE_MISMATCH` / `409 CATEGORY_INACTIVE` / `409 CATEGORY_IN_USE` |
 | V-21 | CSH-3 | A payment-linked cash entry cannot be voided directly; void the payment (which voids the entry in the same transaction). | `409 CASH_ENTRY_LINKED_PAYMENT` |
 | V-22 | REM-2, REM-3 | Placeholders are a strict allowlist (`buyer_name`, `plot`, `project`, `amount`, `due_date`, `company`); unknown/malformed braces are rejected at save time. No expressions, no HTML. | `422 TEMPLATE_PLACEHOLDER_INVALID` |
 | V-23 | REM-5 | `isLive ⇒ providerName ≠ "dry-run" ∧ isEnabled ∧ a secret is configured`; only one channel enabled at a time; a secret write is never echoed. | `422 PROVIDER_CONFIG_INVALID` / `PROVIDER_SECRET_REQUIRED` / `409 CHANNEL_CONFLICT` |
-| V-24 | REP-1, REP-2, CSH-1 | `from` and `to` are required, valid `YYYY-MM-DD`, and `from ≤ to`. Reporting never accepts an open-ended range. | `422 REPORT_RANGE_INVALID` |
+| V-24 | REP-1, REP-2, CSH-1 | `from` and `to` are valid `YYYY-MM-DD` and `from ≤ to`. They are **required** for REP-1 and REP-2, which never accept an open-ended range; for CSH-1 both default to today in PKT when omitted. | `422 REPORT_RANGE_INVALID` |
 | V-25 | all list endpoints | `page ≥ 1`, `1 ≤ pageSize ≤ 100`, `sort` on the endpoint's whitelist, `order ∈ {asc, desc}`. Unknown query parameters are rejected rather than ignored (typos otherwise become silent whole-table scans). | `400 VALIDATION_FAILED` |
-| V-26 | AUTH-5, IDN-4 | Password 12–128 characters, not equal to the current password; the current password is always required for a self-change. | `422 PASSWORD_POLICY_VIOLATION` / `PASSWORD_CURRENT_INVALID` |
+| V-26 | AUTH-5, IDN-4 | Password 12–128 characters applies to both endpoints. For a self-change (AUTH-5) the new password must also differ from the current one, and the current password is always required; IDN-4 applies only the 12–128 length policy. | `422 PASSWORD_POLICY_VIOLATION` / `PASSWORD_CURRENT_INVALID` |
 | V-27 | every request | Unknown JSON properties are rejected (`400`). A request may reference related ids (`plotId`, `buyerId`, `dueItemId`) but may not carry the target row's own `id`, `createdBy`, `recordedBy`, `createdAt`, `role`, status totals or a client timestamp for a server-stamped field. | `400 VALIDATION_FAILED` |
 | V-28 | REC-3, AUD-2 | CSV cells beginning `=`, `+`, `-`, `@` are prefixed with `'`; phone/CNIC are quoted text; UTF-8 BOM + CRLF. | n/a (output rule) |
 | V-29 | AUTH-* | While `must_change_password = true`, every endpoint except the five listed in §2.3 is blocked. | `403 PASSWORD_CHANGE_REQUIRED` |
@@ -1646,7 +1646,7 @@ Every code the API can return, the status it carries, and the condition that pro
 
 | Code | HTTP | Condition | Endpoints |
 |---|---|---|---|
-| `VALIDATION_FAILED` | 400 / 422 | `400` for malformed JSON, wrong type, missing/blank/unknown property, bad enum value, bad pagination/sort, missing reason or bad format. `422` when the shape is valid but a stated positivity rule fails (a `0.00` amount, a `0` Marla value, a negative price) — `fields` names the input | all; `422` at SET-2, SET-4, CSH-2 |
+| `VALIDATION_FAILED` | 400 / 422 | `400` for malformed JSON, wrong type, missing/blank/unknown property, bad enum value, bad pagination/sort, missing reason or bad format. `422` when the shape is valid but a stated positivity rule fails (a `0.00` amount, a `0` Marla value, a negative price) — `fields` names the input | all; `422` at SET-2, SET-4, SET-6, INV-3, INV-5, CSH-2 |
 | `CONFLICT_RETRY` | 409 | Postgres reported a deadlock; a lock-order bug, not a user conflict. Retryable and logged as an anomaly | any write (`ARCHITECTURE.md` §12.3) |
 | `METHOD_NOT_ALLOWED` | 405 | Known path, wrong verb | all |
 | `INTERNAL` | 500 | Unexpected server failure (no details leak) | all |
@@ -1655,7 +1655,7 @@ Every code the API can return, the status it carries, and the condition that pro
 
 | Code | HTTP | Condition | Endpoints |
 |---|---|---|---|
-| `CONFLICT_STALE_WRITE` | 409 | `version` did not match the stored row; `fields.version = STALE` | INV-5, INV-7, SAL-4, SAL-5, SAL-9, SAL-10, SET-6, SET-7 |
+| `CONFLICT_STALE_WRITE` | 409 | `version` did not match the stored row; `fields.version = STALE` | INV-5, INV-7, INV-8, SAL-4, SAL-5, SAL-9, SAL-10, SET-6, SET-7 |
 | `USER_NOT_FOUND` | 404 | Unknown user id | IDN-5 … IDN-8 |
 | `USER_EMAIL_EXISTS` | 409 | `uq_app_user_email` | IDN-4 |
 | `USER_SELF_DEACTIVATION` | 409 | An Admin attempted to deactivate their own account | IDN-6 |
@@ -1776,12 +1776,12 @@ The application is internal, single-tenant and sized for ≤25 users and ≤5 co
 
 ## 7. Open questions
 
-API-level judgment calls the source documents do not settle. Each has a proposed default that this contract follows; none is a new product behavior, and each is recorded so it can be reversed in one place.
+API-level judgment calls the source documents do not settle. Each has a proposed default that this contract follows; none is a new product behavior, and each is recorded so it can be reversed in one place. **API-Q1 and API-Q2 are resolved** — the bundled `ARCHITECTURE.md` errata supplies the missing capability row and annotates Q-1.
 
 | # | Question | Proposed default | Impact if changed |
 |---|---|---|---|
-| **API-Q1** | `ARCHITECTURE.md` §6.2's capability matrix has no consent capability, but PRD FR-4.2 and `ARCHITECTURE.md` §5.4 say Admin/Accountant update buyer consent. Which wins? | A dedicated `buyer.consent` capability granted to **Admin + Accountant**, used only by SAL-5. This follows the behavior documents; the matrix omission looks like an editing gap, not a decision | If the matrix is authoritative instead, consent becomes Admin-only (or moves into `buyer.edit` = Admin/Sales), contradicting FR-4.2. The fix is a one-line ARCH errata; no schema change |
-| **API-Q2** | Q-1 permits a price/plan revision "only when no payment is posted", but `DATABASE.md` §1.6 makes `due_item.amount` and the plan snapshot immutable, so there is no legal way to regenerate due items. What does the API expose? | **No price/plan edit endpoint.** SAL-9 edits only `booking_date`; SAL-10 replaces the buyer set at zero payments (the one path `DATABASE.md` §8.3 explicitly allows). A wrong price/plan after confirmation is corrected by **cancel + rebook** | If a real revision is required, `DATABASE.md` needs a decided mutation path for an unallocated plan (e.g. "regenerate due items at zero payments"), then SAL-9 can accept `salePricePkr`/`plan`. Until then, exposing it would violate the schema document |
+| **API-Q1** (**resolved**) | `ARCHITECTURE.md` §6.2's capability matrix originally had no consent capability, but PRD FR-4.2 and `ARCHITECTURE.md` §5.4 say Admin/Accountant update buyer consent. Which wins? | **Resolved:** `buyer.consent`, granted to **Admin + Accountant** (not Sales Agent), is now a row in `ARCHITECTURE.md` §6.2; SAL-5 uses it. The behavior documents were right | None — the matrix, PRD FR-4.2 and `ARCHITECTURE.md` §5.4 now agree; no schema change |
+| **API-Q2** (**resolved**) | Q-1 permits a price/plan revision "only when no payment is posted", but `DATABASE.md` §1.6 makes `payment_plan` a snapshot and `due_item.amount` immutable, so there is no legal way to regenerate due items. What does the API expose? | **Resolved:** a post-confirm price/plan correction is **cancel + rebook**, and `ARCHITECTURE.md` §19 Q-1 is annotated accordingly. SAL-9 edits only `booking_date`; SAL-10 replaces the buyer set only while zero payments are posted (the one path `DATABASE.md` §8.3 explicitly allows) | If a real revision is ever required, `DATABASE.md` would need a decided mutation path for an unallocated plan; until then, cancel + rebook is the supported correction and no API change is needed |
 | **API-Q3** | PRD BR-2 says advance credit is "used before the next due item", but `payment_allocation` rows are written only when a payment is recorded and are immutable; no table can apply old credit to a later due item. | **Display only.** The ledger shows `advanceCredit`; the API has no "apply credit" command. In the MVP, due items are all created at confirmation, so credit arises only when the booking is over-collected | Applying credit needs a command and a stored link (or a mutable allocation policy) — a `DATABASE.md` change and an ADR. The UI already shows the credit so staff can handle it commercially |
 | **API-Q4** | The sources require per-account lockout/backoff but set no thresholds | 10 failures in 15 minutes → 15-minute lock; 30 and 60 on repeat within 24 h; success clears. Nginx 5/min per IP | Pure configuration; one constant table in Identity. Shorter locks weaken brute-force resistance; longer locks increase support calls |
 | **API-Q5** | No password policy is stated | 12–128 characters, no composition rules, must differ from the current password; Argon2id parameters unchanged | A stricter policy (symbols/rotation) would be a product/security decision; it changes only validation, not schema |
@@ -1812,10 +1812,10 @@ API-level judgment calls the source documents do not settle. Each has a proposed
 | INV-10, INV-11 | US-2.5, FR-3.4 | Reserve/release |
 | INV-12 | D-3, FR-3.4 | Manual Allotted/Sold |
 | SAL-1 … SAL-4 | FR-4.2, US-3.2 | Buyer records and dedupe |
-| SAL-5 | FR-4.2 (Admin/Accountant consent update) | See API-Q1 |
+| SAL-5 | FR-4.2 (Admin/Accountant consent update) | `buyer.consent` in `ARCHITECTURE.md` §6.2; see API-Q1 (resolved) |
 | SAL-6 | FR-4.1, US-3.1/3.3, S-3, §12 | The one-transaction booking confirm |
 | SAL-7, SAL-8 | FR-4.3, US-5.2 | Booking list/detail |
-| SAL-9, SAL-10 | Q-1, `ARCHITECTURE.md` §5.4 | Post-confirm non-financial edits; see API-Q2 |
+| SAL-9, SAL-10 | Q-1, `ARCHITECTURE.md` §5.4 | Post-confirm edits; see API-Q2 (resolved) |
 | SAL-11 | FR-4.4, US-3.4, D-8 | Cancellation |
 | SAL-12, SAL-13 | `ARCHITECTURE.md` §5.4 ("add booking notes") | Architecture-mandated; not a separate PRD story |
 | LED-1, LED-2, LED-4 | FR-6.2, US-5.2 | Booking/buyer ledger |
@@ -1890,9 +1890,8 @@ API-level judgment calls the source documents do not settle. Each has a proposed
 
 ### 8.3 RBAC verification against `ARCHITECTURE.md` §6.2
 
-- **23 capabilities** are used exactly as named in §6.2, and **one more**, `buyer.consent`, is the documented exception below. No endpoint invents a role rule.
-- **Guard distribution:** **71** endpoints are capability-guarded — **70** by one of the 23 matrix capabilities and **1** (SAL-5) by the exception; **7** require only a valid session (AUTH-2/3/4/5, IDN-1, IDN-2, SET-1); **2** are public (AUTH-1, COR-3); **1** uses the machine token (COR-4).
-- **One documented exception:** SAL-5 (consent) uses `buyer.consent`, which §6.2 does not list, because PRD FR-4.2 and `ARCHITECTURE.md` §5.4 assign the action to Admin/Accountant while `buyer.edit` is Admin/Sales. It is flagged as API-Q1, not silently resolved.
+- **24 capabilities** are used exactly as named in §6.2, including `buyer.consent` (Admin + Accountant) for SAL-5. No endpoint invents a role rule.
+- **Guard distribution:** **71** endpoints are capability-guarded by the 24 matrix capabilities; **7** require only a valid session (AUTH-2/3/4/5, IDN-1, IDN-2, SET-1); **2** are public (AUTH-1, COR-3); **1** uses the machine token (COR-4).
 - **No endpoint is guarded by a capability that excludes a role the PRD screen allows**, and no endpoint grants a write the PRD §10 matrix denies. In particular:
   - Sales Agent is read-only everywhere in Recovery (REC-1/2/3) and has no `payment.record`, `payment.void`, `cashbook.record`, `reminder.configure`, `user.manage` or `audit.read`.
   - Accountant has no `booking.create`, `booking.manage`, `booking.cancel`, `setup.manage`, `inventory.manage`, `inventory.status`, `reminder.configure` or `audit.read`.
@@ -1912,7 +1911,7 @@ API-level judgment calls the source documents do not settle. Each has a proposed
 | Date/money format | Every money/area/percentage field is a string; every business date is `YYYY-MM-DD`; every event is UTC ISO-8601 — no numeric money, no localized date |
 | Pagination | Every list endpoint uses the same `page`/`pageSize`/`total` envelope; CSV/PDF are the only unpaginated streams |
 | Idempotency | Exactly two creates accept `clientRequestId`, matching the two unique indexes; replay always returns `200` + `Idempotent-Replay: true` |
-| Versioning | Every edit to a `version`-bearing table requires it; the settings tables without one (`company`, `cash_category`, `reminder_template`, `provider_config`) are documented as last-write-wins |
+| Versioning | Every edit to a `version`-bearing table requires it; the tables edited without one (`company`, `cash_category`, `reminder_template`, `provider_config`, `app_user`, `block`) are documented as last-write-wins |
 | No new product behavior | No endpoint adds a state, a status value, a table, a column, a report metric, a message channel or a permission beyond the three source documents; the seven judgment calls are in §7 |
 
 ### 8.5 Additions, and where they came from
@@ -1921,7 +1920,7 @@ This document introduces **no table, column, status value, enum or report metric
 
 | Addition | Why it exists | Where it is decided |
 |---|---|---|
-| `buyer.consent` capability | FR-4.2 and `ARCHITECTURE.md` §5.4 give consent to Admin/Accountant; §6.2's matrix has no row for it | §7, API-Q1 |
+| `buyer.consent` capability | FR-4.2 and `ARCHITECTURE.md` §5.4 give consent to Admin/Accountant; `ARCHITECTURE.md` §6.2 now carries the row (added by the bundled errata) | §7, API-Q1 (resolved) |
 | SAL-12, SAL-13, REM-6, AUD-3, COR-3, COR-4 | `ARCHITECTURE.md` mandates the feature (notes, test message, booking timeline, liveness, health details) but the PRD lists no story for it | §8.1 |
 | `Idempotent-Replay: true` + `200` on replay | `ARCHITECTURE.md` §12.5 defines duplicate behavior but not the wire signal; clients need an unambiguous one | §1.7 |
 | Password length (12–128), lockout steps (15/30/60 min), `pageSize ≤ 100` | The sources require the control but fix no number | API-Q4, API-Q5, V-25 |
@@ -1930,7 +1929,7 @@ This document introduces **no table, column, status value, enum or report metric
 
 None changes what a user can do, what is stored, or who may do it. If any of these should become product behavior, the change belongs in `PRD.md` first, then here.
 
-**Conclusion.** The contract is implementable against `DATABASE.md` as written. The only item that needs a source-document decision rather than code is **API-Q2** (post-confirm plan revision), because Q-1 and `DATABASE.md` §1.6 currently contradict each other at the schema level. **API-Q1** needs a one-line capability-matrix correction. Neither blocks the MVP: the default in this document is the behavior that the schema can actually enforce.
+**Conclusion.** The contract is implementable against `DATABASE.md` as written. **API-Q1** is resolved by the `buyer.consent` row now in `ARCHITECTURE.md` §6.2, and **API-Q2** is resolved by the Q-1 annotation in `ARCHITECTURE.md` §19: a post-confirm price/plan correction is cancel + rebook. Neither requires a further source-document decision, and the contract is the behavior the schema can actually enforce.
 
 ---
 

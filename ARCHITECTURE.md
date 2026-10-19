@@ -754,6 +754,7 @@ There are exactly three roles (PRD §10): **Admin**, **Sales Agent**, **Accounta
 | `booking.note` | ✅ | ✅ | — |
 | `buyer.read` | ✅ | ✅ | ✅ |
 | `buyer.edit` | ✅ | ✅ | — |
+| `buyer.consent` (change a buyer's SMS/WhatsApp consent; PRD FR-4.2) | ✅ | — | ✅ |
 | `sales.read` (bookings) | ✅ | ✅ | ✅ |
 | `ledger.read` | ✅ | ✅ | ✅ |
 | `payment.record` | ✅ | — | ✅ |
@@ -2041,7 +2042,7 @@ All thirteen questions are **decided**. The table records the decision that the 
 
 | # | Question | Decided | Impact if changed |
 |---|---|---|---|
-| Q-1 | Can a confirmed booking's price or plan be edited? | Non-financial fields only; price/plan revision allowed only when no payment is posted, otherwise cancel and rebook | Ledger design, audit events, UI |
+| Q-1 | Can a confirmed booking's price or plan be edited? | Non-financial fields only. Because `DATABASE.md` §1.6 makes `payment_plan` a snapshot and `due_item.amount` immutable, a price/plan correction after confirmation is performed by **cancel + rebook**; the only post-confirm ownership edit is replacing the buyer set while zero payments are posted (`API.md` SAL-10). | Ledger design, audit events, UI |
 | Q-2 | Can a cash entry be edited, or only voided? | Void only; correction = void + repost with a reason | Report parity, audit trail |
 | Q-3 | Is the down payment due on the booking date or a chosen date? | Optional due date; default booking date | Plan generation, reminders |
 | Q-4 | Maximum installment count? | 120 | PDF page limits, edit performance |
