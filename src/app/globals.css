@@ -1,0 +1,5 @@
+/*
+ * Tailwind entry point (ARCHITECTURE.md §3.1). DESIGN.md §4 tokens are added to
+ * this file in Phase 1, when the design-system layer starts.
+ */
+@import "tailwindcss";
