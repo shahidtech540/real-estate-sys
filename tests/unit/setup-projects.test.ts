@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
-import { AppError } from "@/core/errors";
+import { AppError, errorEnvelope } from "@/core/errors";
 import {
   AUDIT_ACTION_CODES,
   isAuditActionCode,
@@ -200,6 +200,23 @@ describe("marla positivity reuses the SET-2 rule (V-19, ck_project_marla)", () =
         expect(appError.wireFields).toEqual({ marlaSqft: "TOO_SMALL" });
       }
     }
+  });
+});
+
+describe("stale-write contract (API.md §1.6, SET-6/SET-7)", () => {
+  it("serialises fields.version = STALE on the 409", () => {
+    const error = new AppError("CONFLICT_STALE_WRITE", {
+      fields: { version: "STALE" },
+    });
+    expect(error.status).toBe(409);
+    expect(errorEnvelope(error, "req-stale")).toEqual({
+      error: {
+        code: "CONFLICT_STALE_WRITE",
+        message: error.message,
+        requestId: "req-stale",
+        fields: { version: "STALE" },
+      },
+    });
   });
 });
 
