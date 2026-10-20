@@ -51,6 +51,9 @@ function Shell({ user, capabilities, children }: AppShellProps) {
   const t = useT();
   const router = useRouter();
   const canManageUsers = capabilities.includes("user.manage");
+  // Settings is Admin-only (PRD §11 #14); the nav follows `setup.manage` rather
+  // than the role name (`ARCHITECTURE.md` §6.2–§6.3).
+  const canManageSetup = capabilities.includes("setup.manage");
 
   const signOut = async () => {
     try {
@@ -89,6 +92,9 @@ function Shell({ user, capabilities, children }: AppShellProps) {
             {t("nav.administration")}
           </p>
           <NavLink href="/dashboard" label={t("nav.dashboard")} />
+          {canManageSetup ? (
+            <NavLink href="/settings" label={t("nav.settings")} />
+          ) : null}
           {canManageUsers ? (
             <NavLink href="/users" label={t("nav.users")} />
           ) : null}

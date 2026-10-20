@@ -30,6 +30,16 @@ export interface DbClient {
   user: Delegate;
   session: Delegate;
   loginThrottle: Delegate;
+  /**
+   * `company`/`project` are the Setup module's tables; `buyer` is read-only and
+   * only for the file-lifecycle union: `ARCHITECTURE.md` §7.5 and
+   * `DATABASE.md` §3.11 require the "is this object still referenced?" check to
+   * look at all three reference columns (company logo, project master plan,
+   * buyer photo), which the file owner (`core`) performs.
+   */
+  company: Delegate;
+  project: Delegate;
+  buyer: Delegate;
   fileObject: Delegate;
   jobRun: Delegate;
   auditLog: Omit<Delegate, "update" | "upsert" | "deleteMany">;

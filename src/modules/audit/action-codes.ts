@@ -17,6 +17,9 @@ export const AUDIT_ACTION_CODES = {
   userDeactivated: "user.deactivated",
   userPasswordReset: "user.password_reset",
   userUnlocked: "user.unlocked",
+  // Named verbatim by `API.md` SET-2 ("audit_log company.created / company.updated").
+  companyCreated: "company.created",
+  companyUpdated: "company.updated",
 } as const;
 
 export type AuditActionCode =

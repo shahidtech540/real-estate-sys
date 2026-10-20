@@ -12,7 +12,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    // `.tsx` is for the render tests (React Testing Library / server render);
+    // they still run in Node because `renderToStaticMarkup` needs no DOM.
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     env: { TZ: "UTC", NODE_ENV: "test" },
     restoreMocks: true,
   },

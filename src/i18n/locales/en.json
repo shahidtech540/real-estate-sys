@@ -24,7 +24,8 @@
   "nav": {
     "dashboard": "Dashboard",
     "users": "Users",
-    "administration": "Administration"
+    "administration": "Administration",
+    "settings": "Settings"
   },
   "auth": {
     "signIn": "Sign in",
@@ -80,6 +81,39 @@
     "USER_SELF_DEACTIVATION": "You cannot deactivate your own account.",
     "USER_LAST_ADMIN": "At least one active Admin must remain.",
     "RATE_LIMITED": "Too many requests. Wait a minute and try again.",
-    "INTERNAL": "An unexpected error occurred."
+    "INTERNAL": "An unexpected error occurred.",
+    "COMPANY_NOT_CONFIGURED": "The company profile is not set up yet.",
+    "FILE_NOT_FOUND": "That file no longer exists.",
+    "FILE_KIND_MISMATCH": "That file cannot be used as a company logo.",
+    "FILE_TOO_LARGE": "The file is too large.",
+    "FILE_TYPE_UNSUPPORTED": "That file type is not supported.",
+    "FILE_UNREADABLE": "The image could not be read.",
+    "CONFLICT_RETRY": "Something else changed at the same time. Try again."
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Company profile, logo, PDF terms and the Marla conversion.",
+    "firstRunTitle": "Set up the company profile",
+    "firstRunBody": "The company name, logo and terms text appear on every allotment letter and payment schedule. Add them once; you can edit them here any time.",
+    "firstRunAction": "Create company profile",
+    "name": "Company name",
+    "address": "Address",
+    "phone": "Phone",
+    "email": "Email",
+    "pdfTermsText": "PDF terms text",
+    "pdfTermsHint": "Printed on allotment letters as plain text, in English.",
+    "marlaSqft": "Square feet per Marla",
+    "marlaHint": "Default for every project that does not set its own conversion. 1 Marla = 225 sq ft by default.",
+    "logo": "Company logo",
+    "logoHint": "PNG, JPG or WebP, up to 2 MB. Shown on PDFs.",
+    "noLogo": "No logo uploaded yet.",
+    "chooseLogo": "Choose logo",
+    "replaceLogo": "Replace logo",
+    "removeLogo": "Remove",
+    "uploading": "Uploading…",
+    "logoAlt": "Company logo",
+    "save": "Save company profile",
+    "saved": "Company profile saved.",
+    "retry": "Retry"
   }
 }

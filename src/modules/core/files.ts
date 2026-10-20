@@ -1,5 +1,5 @@
 import { AppError } from "@/core/errors";
-import { db } from "@/core/db";
+import { db, type Db } from "@/core/db";
 import { requireCapability } from "@/core/authz/policy";
 import type { FileKind } from "@/core/files/upload";
 import {
@@ -139,6 +139,57 @@ export interface ServedFile {
   contentType: string;
   etag: string;
   byteSize: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Binding and lifecycle — used by the owning module's commands (SET-2, SET-7,
+// SAL-2/SAL-4). They take the caller's client/transaction, because the binding
+// write belongs to the caller's transaction (`ARCHITECTURE.md` §4.4 rule 3).
+// ---------------------------------------------------------------------------
+
+export interface BindableFile {
+  id: string;
+  kind: FileKind;
+  deletedAt: Date | null;
+}
+
+/** Reads only the columns a binding check needs — never the storage key. */
+export async function findFileForBinding(
+  client: Db,
+  id: string,
+): Promise<BindableFile | null> {
+  return (await client.fileObject.findUnique({
+    where: { id },
+    select: { id: true, kind: true, deletedAt: true },
+  })) as BindableFile | null;
+}
+
+/**
+ * "Is this object still referenced?" across the three reference columns —
+ * `DATABASE.md` §3.11 (`file_object` dedupe + soft delete) and
+ * `ARCHITECTURE.md` §7.5. The check lives with the file owner (`core`) because
+ * it is a file-lifecycle rule, not a Setup rule; it is a union of counts, not a
+ * cross-domain join.
+ */
+export async function countFileReferences(
+  client: Db,
+  fileId: string,
+): Promise<number> {
+  const [companies, projects, buyers] = await Promise.all([
+    client.company.count({ where: { logoFileId: fileId } }),
+    client.project.count({ where: { masterPlanFileId: fileId } }),
+    client.buyer.count({ where: { photoFileId: fileId } }),
+  ]);
+  return companies + projects + buyers;
+}
+
+/** Soft delete inside the caller's transaction — the blob is removed later by the GC job. */
+export async function softDeleteFile(
+  client: Db,
+  id: string,
+  at: Date,
+): Promise<void> {
+  await client.fileObject.update({ where: { id }, data: { deletedAt: at } });
 }
 
 /**
