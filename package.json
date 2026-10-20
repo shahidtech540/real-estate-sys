@@ -23,7 +23,9 @@
     "db:seed": "prisma db seed",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run tests/unit --passWithNoTests",
-    "test:e2e": "playwright test"
+    "test:integration": "vitest run tests/integration --passWithNoTests",
+    "test:e2e": "playwright test",
+    "i18n:check": "node scripts/i18n-check.mjs"
   },
   "dependencies": {
     "@node-rs/argon2": "2.2.2",
@@ -36,6 +38,7 @@
     "@tanstack/react-query": "5.104.5",
     "@tanstack/react-table": "8.21.3",
     "decimal.js": "10.6.0",
+    "file-type": "22.2.0",
     "i18next": "26.5.3",
     "konva": "10.9.0",
     "lucide-react": "1.59.0",

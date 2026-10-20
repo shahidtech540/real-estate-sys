@@ -49,6 +49,19 @@ export default tseslint.config(
     },
   },
   {
+    // Tests touch the generated Prisma client, which is an untyped stub in
+    // sandboxes that cannot download an engine. Runtime behaviour is what these
+    // files assert; the application code keeps the strict rules.
+    files: ["tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+    },
+  },
+  {
     files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
     extends: [tseslint.configs.disableTypeChecked],
   },

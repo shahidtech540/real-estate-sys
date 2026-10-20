@@ -1,11 +1,14 @@
-# Step 8 CI gate: install → typecheck → lint → prisma validate.
+# CI gate — AGENTS.md §7.3 and ARCHITECTURE.md §14.3.
 #
-# Deliberately no test step yet: there are no tests in the scaffold, and
-# IMPLEMENTATION-PLAN.md assigns the first unit/integration/E2E work to Phase 1.
-# The full pipeline described in ARCHITECTURE.md §14.3 is added phase by phase.
+# Step 8 shipped install → typecheck → lint → `prisma validate`. Phase 1 adds the
+# test steps now that they exist:
+#   • unit tests          — pure logic, no database
+#   • integration tests   — real PostgreSQL service + the migration set
+#   • i18n catalog check  — identical en/ur shapes, no orphans, no empties
 #
 # Node 24 matches ARCHITECTURE.md §3.1 and `engines` in package.json.
 # `npm ci` matches ARCHITECTURE.md §3.6 ("use npm ci in CI and Docker").
+# PostgreSQL 17 matches ARCHITECTURE.md §14.2 (the compose image).
 
 name: CI
 
@@ -23,14 +26,30 @@ concurrency:
 
 jobs:
   checks:
-    name: Install, typecheck, lint, prisma validate
+    name: Install, typecheck, lint, test, prisma validate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: spm
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: spm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U spm -d spm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
-      # `prisma validate` only checks that a datasource URL is resolvable.
-      # Nothing connects; this is not a secret (ARCHITECTURE.md §14.5).
-      DATABASE_URL: postgresql://spm_app:ci@localhost:5432/spm
+      # Local service credentials for the test job only — not a secret
+      # (ARCHITECTURE.md §14.5). `npx prisma validate` only resolves this URL.
+      DATABASE_URL: postgresql://spm:ci@localhost:5432/spm_test
+      TEST_DATABASE_URL: postgresql://spm:ci@localhost:5432/spm_test
 
     steps:
       - name: Checkout
@@ -45,11 +64,26 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations to the test database
+        run: npx prisma migrate deploy
+
       - name: Typecheck
         run: npm run typecheck
 
       - name: Lint
         run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: i18n catalogs
+        run: npm run i18n:check
 
       - name: Validate Prisma schema
         run: npx prisma validate
