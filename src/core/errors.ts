@@ -24,9 +24,11 @@ export type ApiErrorCode =
   | "USER_SELF_DEACTIVATION"
   | "USER_LAST_ADMIN"
   | "FILE_NOT_FOUND"
+  | "FILE_KIND_MISMATCH"
   | "FILE_TOO_LARGE"
   | "FILE_TYPE_UNSUPPORTED"
   | "FILE_UNREADABLE"
+  | "COMPANY_NOT_CONFIGURED"
   | "RATE_LIMITED";
 
 const STATUS: Record<ApiErrorCode, number> = {
@@ -48,9 +50,11 @@ const STATUS: Record<ApiErrorCode, number> = {
   USER_SELF_DEACTIVATION: 409,
   USER_LAST_ADMIN: 409,
   FILE_NOT_FOUND: 404,
+  FILE_KIND_MISMATCH: 422,
   FILE_TOO_LARGE: 413,
   FILE_TYPE_UNSUPPORTED: 415,
   FILE_UNREADABLE: 422,
+  COMPANY_NOT_CONFIGURED: 404,
   RATE_LIMITED: 429,
 };
 
@@ -73,13 +77,29 @@ const MESSAGE: Partial<Record<ApiErrorCode, string>> = {
   USER_SELF_DEACTIVATION: "You cannot deactivate your own account.",
   USER_LAST_ADMIN: "At least one active Admin must remain.",
   FILE_NOT_FOUND: "File not found.",
+  FILE_KIND_MISMATCH: "That file cannot be used here.",
   FILE_TOO_LARGE: "The file is too large.",
   FILE_TYPE_UNSUPPORTED: "That file type is not supported.",
   FILE_UNREADABLE: "The image could not be read.",
+  COMPANY_NOT_CONFIGURED: "The company profile is not configured yet.",
   RATE_LIMITED: "Too many requests. Please slow down.",
 };
 
 export type FieldErrors = Record<string, string>;
+
+export interface AppErrorOptions {
+  message?: string;
+  fields?: FieldErrors;
+  retryAfterSeconds?: number;
+  cause?: unknown;
+  /**
+   * `API.md` §1.3 and §5.2: `VALIDATION_FAILED` is the one catalogue code that
+   * carries two statuses — `400` when the *shape* is wrong, `422` when a
+   * well-formed value breaks a stated domain rule (a `0.00` Marla value, a
+   * negative price). Any other code/status pair is a bug, so it throws.
+   */
+  httpStatus?: 422;
+}
 
 /**
  * A business failure with a documented code. Thrown by commands/queries and
@@ -92,19 +112,18 @@ export class AppError extends Error {
   /** Seconds for `Retry-After`; only 429 uses it (`API.md` §1.3). */
   readonly retryAfterSeconds?: number;
 
-  constructor(
-    code: ApiErrorCode,
-    options: {
-      message?: string;
-      fields?: FieldErrors;
-      retryAfterSeconds?: number;
-      cause?: unknown;
-    } = {},
-  ) {
+  constructor(code: ApiErrorCode, options: AppErrorOptions = {}) {
     super(options.message ?? MESSAGE[code] ?? code, { cause: options.cause });
+    if (options.httpStatus !== undefined) {
+      if (code !== "VALIDATION_FAILED" || options.httpStatus !== 422) {
+        throw new Error(
+          `AppError: ${code} cannot be raised with HTTP ${String(options.httpStatus)}`,
+        );
+      }
+    }
     this.name = "AppError";
     this.code = code;
-    this.status = STATUS[code];
+    this.status = options.httpStatus ?? STATUS[code];
     this.fields = options.fields;
     this.retryAfterSeconds = options.retryAfterSeconds;
   }
@@ -117,6 +136,15 @@ export class AppError extends Error {
 
 export function isAppError(error: unknown): error is AppError {
   return error instanceof AppError;
+}
+
+/**
+ * `422 VALIDATION_FAILED` — the "well-formed but the rule fails" branch of
+ * `API.md` §1.3 (`marlaSqft <= 0` at SET-2/SET-4/SET-6 is the Setup example).
+ * Kept next to the class so no module re-implements the status override.
+ */
+export function unprocessable(fields: FieldErrors): AppError {
+  return new AppError("VALIDATION_FAILED", { fields, httpStatus: 422 });
 }
 
 export interface ErrorEnvelope {

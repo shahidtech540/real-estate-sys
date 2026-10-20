@@ -9,5 +9,11 @@ Company profile, logo, PDF terms text, projects, blocks, marla conversion.
 - Owns: `company`, `project`, `block`, `app_setting`
 - Module anatomy (`index.ts`, `schemas.ts`, `commands.ts`, `queries.ts`, `repository.ts`, `policies.ts`, `errors.ts`, `ui/`): `ARCHITECTURE.md` §4.1
 
-This directory is a stub created by the Step 8 scaffold. Files are added when the
-module is built; nothing here is active yet.
+## Status
+
+- **Company profile (SET-1, SET-2)** — implemented: `schemas.ts`, `policies.ts`,
+  `repository.ts`, `dto.ts`, `queries.ts`, `commands.ts`, `index.ts`, plus
+  `src/app/api/company/route.ts` and the Settings screen
+  (`IMPLEMENTATION-PLAN.md` §2.4).
+- **Projects (SET-3…SET-7), blocks (SET-8…SET-11)** — later PRs of Phase 2.
+- `app_setting` stays **read-only and endpoint-free** (`API.md` §3.2).

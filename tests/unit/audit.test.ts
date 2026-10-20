@@ -122,12 +122,15 @@ describe("record", () => {
     expect(fake.delete).not.toHaveBeenCalled();
   });
 
-  it("exposes only the phase-1 action codes", () => {
+  it("exposes exactly the codes named by the shipped endpoints", () => {
     expect(Object.values(AUDIT_ACTION_CODES).sort()).toEqual([
       "auth.login",
       "auth.login_failed",
       "auth.logout",
       "auth.password_changed",
+      // Named verbatim by API.md SET-2.
+      "company.created",
+      "company.updated",
       "user.created",
       "user.deactivated",
       "user.password_reset",
