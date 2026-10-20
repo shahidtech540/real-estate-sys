@@ -29,6 +29,10 @@ export type ApiErrorCode =
   | "FILE_TYPE_UNSUPPORTED"
   | "FILE_UNREADABLE"
   | "COMPANY_NOT_CONFIGURED"
+  | "PROJECT_NOT_FOUND"
+  | "PROJECT_NAME_EXISTS"
+  | "CONFLICT_STALE_WRITE"
+  | "MASTER_PLAN_ASPECT_CHANGED"
   | "RATE_LIMITED";
 
 const STATUS: Record<ApiErrorCode, number> = {
@@ -55,6 +59,10 @@ const STATUS: Record<ApiErrorCode, number> = {
   FILE_TYPE_UNSUPPORTED: 415,
   FILE_UNREADABLE: 422,
   COMPANY_NOT_CONFIGURED: 404,
+  PROJECT_NOT_FOUND: 404,
+  PROJECT_NAME_EXISTS: 409,
+  CONFLICT_STALE_WRITE: 409,
+  MASTER_PLAN_ASPECT_CHANGED: 422,
   RATE_LIMITED: 429,
 };
 
@@ -82,6 +90,11 @@ const MESSAGE: Partial<Record<ApiErrorCode, string>> = {
   FILE_TYPE_UNSUPPORTED: "That file type is not supported.",
   FILE_UNREADABLE: "The image could not be read.",
   COMPANY_NOT_CONFIGURED: "The company profile is not configured yet.",
+  PROJECT_NOT_FOUND: "Project not found.",
+  PROJECT_NAME_EXISTS: "A project with that name already exists.",
+  CONFLICT_STALE_WRITE: "This record changed since you loaded it.",
+  MASTER_PLAN_ASPECT_CHANGED:
+    "The new master plan has a different aspect ratio; confirm the change.",
   RATE_LIMITED: "Too many requests. Please slow down.",
 };
 

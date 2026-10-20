@@ -17,5 +17,15 @@ export default defineConfig({
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     env: { TZ: "UTC", NODE_ENV: "test" },
     restoreMocks: true,
+    /**
+     * Integration files share **one** PostgreSQL database (`TEST_DATABASE_URL`)
+     * and each needs the `company` singleton to itself: `company.test.ts` and
+     * `projects.test.ts` both clear `project`/`company` to test the first-run
+     * state (`DATABASE.md` §10.6, `AGENTS.md` §7.4). Vitest runs files in
+     * parallel workers by default, which lets one suite delete the row the
+     * other is asserting on. Serialise files so those fixtures cannot
+     * interleave; the unit files lose a couple of seconds and gain determinism.
+     */
+    fileParallelism: false,
   },
 });

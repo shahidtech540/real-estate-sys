@@ -20,6 +20,10 @@ export const AUDIT_ACTION_CODES = {
   // Named verbatim by `API.md` SET-2 ("audit_log company.created / company.updated").
   companyCreated: "company.created",
   companyUpdated: "company.updated",
+  // Named verbatim by `API.md` SET-4, SET-6 and SET-7.
+  projectCreated: "project.created",
+  projectUpdated: "project.updated",
+  projectMasterPlanReplaced: "project.master_plan_replaced",
 } as const;
 
 export type AuditActionCode =
