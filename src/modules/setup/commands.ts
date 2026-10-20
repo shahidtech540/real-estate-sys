@@ -9,15 +9,27 @@ import {
   softDeleteFile,
 } from "@/modules/core/files";
 import type { Actor, RequestMeta } from "@/modules/identity";
-import { toCompanyDto, type CompanyDto } from "./dto";
+import {
+  toCompanyDto,
+  toProjectDto,
+  type CompanyDto,
+  type ProjectDto,
+} from "./dto";
 import {
   assertPositiveMarla,
   changedCompanyFields,
+  changedProjectFields,
+  planAspectRatioChanged,
   shouldSoftDeleteLogo,
   type CompanyValues,
 } from "./policies";
 import * as repo from "./repository";
-import type { CompanyBody } from "./schemas";
+import type {
+  CompanyBody,
+  CreateProjectBody,
+  MasterPlanBody,
+  UpdateProjectBody,
+} from "./schemas";
 
 /**
  * `PUT /api/company` — `API.md` §3.2 SET-2.
@@ -175,4 +187,250 @@ function isSingletonConflict(error: unknown): boolean {
   return (
     /unique constraint/i.test(error.message) || /23505/.test(error.message)
   );
+}
+
+// ---------------------------------------------------------------------------
+// Projects — `API.md` §3.2 SET-4, SET-6, SET-7
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/projects` — SET-4.
+ *
+ * Order: capability (`setup.manage`) → `marlaSqft` positivity (`422`) → company
+ * exists (`404 COMPANY_NOT_CONFIGURED`) → insert + `project.created` in one
+ * transaction. `companyId` is the singleton, never the body (`API.md` SET-4
+ * "derived, never sent"). A `marlaSqft` of `null` is replaced with the
+ * company's current value **at creation time** (`PRD` D-1): the row stores a
+ * real number, so a later company change cannot retroactively move the project.
+ */
+export async function createProject(
+  actor: Actor,
+  input: CreateProjectBody,
+  meta: RequestMeta,
+): Promise<ProjectDto> {
+  requireCapability(actor, "setup.manage");
+  if (input.marlaSqft !== null) assertPositiveMarla(input.marlaSqft);
+
+  try {
+    return await db().$transaction(async (tx: Tx) => {
+      const company = await repo.findCompany(tx);
+      if (!company) throw new AppError("COMPANY_NOT_CONFIGURED");
+
+      const marlaSqft =
+        input.marlaSqft === null
+          ? toWireAmount(company.marlaSqft)
+          : toWireAmount(input.marlaSqft);
+
+      const created = await repo.insertProject(tx, {
+        companyId: company.id,
+        name: input.name,
+        location: input.location,
+        marlaSqft,
+      });
+      await record(tx, {
+        action: "project.created",
+        entityType: "project",
+        entityId: created.id,
+        actor: { id: actor.id, label: actor.name },
+        requestId: meta.requestId,
+        ip: meta.ip,
+        // Ids and field names only (`ARCHITECTURE.md` §13.2).
+        summary: {
+          companyId: company.id,
+          fields: ["name", "location", "marlaSqft"],
+        },
+      });
+      return toProjectDto(created);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new AppError("PROJECT_NAME_EXISTS", { fields: { name: "EXISTS" } });
+    }
+    throw error;
+  }
+}
+
+/**
+ * `PATCH /api/projects/{id}` — SET-6.
+ *
+ * The update **is** the compare-and-swap (`DATABASE.md` §1.7, `API.md` §1.6):
+ * `UPDATE … WHERE id = $1 AND version = $2`. The `WHERE` clause is the source
+ * of truth — two concurrent PATCHes both send the version they loaded, so at
+ * most one UPDATE can match and the other gets `409`, with no lost update.
+ *
+ * The row is loaded before the update for two things the CAS cannot provide:
+ * answering `404 PROJECT_NOT_FOUND` for an unknown id, and diffing the fields
+ * for the audit summary. That read never decides whether the write succeeds —
+ * `matched === 0` is always `409`, even though the row was just read
+ * successfully — so it cannot reintroduce a read-then-compare race.
+ */
+export async function updateProject(
+  actor: Actor,
+  id: string,
+  input: UpdateProjectBody,
+  meta: RequestMeta,
+): Promise<ProjectDto> {
+  requireCapability(actor, "setup.manage");
+  if (input.marlaSqft !== undefined && input.marlaSqft !== null) {
+    assertPositiveMarla(input.marlaSqft);
+  }
+  if (input.name !== undefined) {
+    // The schema already rejects blank names; this keeps the intent explicit.
+    if (input.name.trim() === "") {
+      throw new AppError("VALIDATION_FAILED", { fields: { name: "REQUIRED" } });
+    }
+  }
+
+  const data: repo.ProjectPatchData = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.location !== undefined) data.location = input.location;
+  if (input.marlaSqft !== undefined) {
+    data.marlaSqft =
+      input.marlaSqft === null ? null : toWireAmount(input.marlaSqft);
+  }
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+  try {
+    return await db().$transaction(async (tx: Tx) => {
+      const previous = await repo.findProjectById(tx, id);
+      if (!previous) throw new AppError("PROJECT_NOT_FOUND");
+
+      const changed = changedProjectFields(previous, {
+        name: data.name,
+        location: data.location,
+        marlaSqft: data.marlaSqft,
+        isActive: data.isActive,
+      });
+
+      // The CAS. Even an all-optional body advances the counter, so every
+      // successful PATCH moves the row forward and a stale token is always
+      // detectable; `fields` stays empty when nothing actually changed.
+      const matched = await repo.patchProject(tx, id, input.version, data);
+      if (matched === 0) {
+        throw new AppError("CONFLICT_STALE_WRITE", {
+          fields: { version: "STALE" },
+        });
+      }
+
+      const updated = await repo.findProjectById(tx, id);
+      if (!updated) {
+        // The row cannot vanish: `project` is never hard-deleted
+        // (`DATABASE.md` §1.6). Treat it as the documented stale conflict.
+        throw new AppError("CONFLICT_STALE_WRITE", {
+          fields: { version: "STALE" },
+        });
+      }
+
+      if (changed.length > 0) {
+        await record(tx, {
+          action: "project.updated",
+          entityType: "project",
+          entityId: updated.id,
+          actor: { id: actor.id, label: actor.name },
+          requestId: meta.requestId,
+          ip: meta.ip,
+          // Field **names** only; no project name, location or amount.
+          summary: { fields: changed },
+        });
+      }
+      return toProjectDto(updated);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new AppError("PROJECT_NAME_EXISTS", { fields: { name: "EXISTS" } });
+    }
+    throw error;
+  }
+}
+
+/**
+ * `PUT /api/projects/{id}/master-plan` — SET-7.
+ *
+ * **Capability is `inventory.manage`, not `setup.manage`** — `API.md` SET-7's
+ * roles line is literal, and `ARCHITECTURE.md` §6.2 puts the master plan under
+ * `inventory.manage` even though `project` is the Setup module's table. The
+ * binding is an inventory concern; the table ownership is unchanged.
+ *
+ * The transaction:
+ * 1. read the project (needed for the stored aspect ratio and its dimensions);
+ * 2. `V-14` file check: exists, not soft-deleted, kind `MASTER_PLAN`;
+ * 3. `V-12` aspect guard unless confirmed or first upload;
+ * 4. CAS on `version` — zero rows is `409 CONFLICT_STALE_WRITE`;
+ * 5. audit `project.master_plan_replaced`, ids and field names only.
+ *
+ * **The previous master plan is never deleted** (`ARCHITECTURE.md` §7.5: "all
+ * versions are retained"). This deliberately does **not** call
+ * `countFileReferences`/`softDeleteFile` — that pair belongs to SET-2's logo
+ * lifecycle, where a replaced object is soft-deleted when unreferenced.
+ */
+export async function replaceProjectMasterPlan(
+  actor: Actor,
+  id: string,
+  input: MasterPlanBody,
+  meta: RequestMeta,
+): Promise<ProjectDto> {
+  requireCapability(actor, "inventory.manage");
+
+  return await db().$transaction(async (tx: Tx) => {
+    const previous = await repo.findProjectById(tx, id);
+    if (!previous) throw new AppError("PROJECT_NOT_FOUND");
+
+    const file = await findFileForBinding(tx, input.fileId);
+    if (!file || file.deletedAt) throw new AppError("FILE_NOT_FOUND");
+    if (file.kind !== "MASTER_PLAN") throw new AppError("FILE_KIND_MISMATCH");
+
+    const priorDimensions =
+      previous.masterPlanWidthPx !== null &&
+      previous.masterPlanHeightPx !== null
+        ? {
+            widthPx: previous.masterPlanWidthPx,
+            heightPx: previous.masterPlanHeightPx,
+          }
+        : null;
+    const nextDimensions =
+      file.widthPx !== null && file.heightPx !== null
+        ? { widthPx: file.widthPx, heightPx: file.heightPx }
+        : null;
+
+    if (
+      planAspectRatioChanged(
+        priorDimensions,
+        nextDimensions,
+        input.confirmAspectRatioChange,
+      )
+    ) {
+      throw new AppError("MASTER_PLAN_ASPECT_CHANGED", {
+        fields: { fileId: "ASPECT_CHANGED" },
+      });
+    }
+
+    const matched = await repo.replaceMasterPlan(tx, id, input.version, {
+      masterPlanFileId: file.id,
+      masterPlanWidthPx: file.widthPx,
+      masterPlanHeightPx: file.heightPx,
+      masterPlanUploadedAt: new Date(),
+    });
+    if (matched === 0) {
+      throw new AppError("CONFLICT_STALE_WRITE", {
+        fields: { version: "STALE" },
+      });
+    }
+
+    const updated = await repo.findProjectById(tx, id);
+    if (!updated) throw new AppError("PROJECT_NOT_FOUND");
+
+    await record(tx, {
+      action: "project.master_plan_replaced",
+      entityType: "project",
+      entityId: updated.id,
+      actor: { id: actor.id, label: actor.name },
+      requestId: meta.requestId,
+      ip: meta.ip,
+      summary: {
+        previousFileId: previous.masterPlanFileId,
+        fileId: file.id,
+        fields: ["masterPlanFileId", "masterPlanWidthPx", "masterPlanHeightPx"],
+      },
+    });
+    return toProjectDto(updated);
+  });
 }

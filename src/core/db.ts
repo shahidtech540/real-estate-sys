@@ -21,6 +21,12 @@ interface Delegate {
   findMany(args: Args): Promise<unknown[]>;
   create(args: Args): Promise<unknown>;
   update(args: Args): Promise<unknown>;
+  /**
+   * The compare-and-swap primitive — `DATABASE.md` §1.7. A conditional
+   * `updateMany` reports how many rows matched, which is how SET-6/SET-7 learn
+   * that `version` was stale without a read-then-compare race.
+   */
+  updateMany(args: Args): Promise<{ count: number }>;
   upsert(args: Args): Promise<unknown>;
   count(args: Args): Promise<number>;
   deleteMany(args: Args): Promise<unknown>;
@@ -42,7 +48,7 @@ export interface DbClient {
   buyer: Delegate;
   fileObject: Delegate;
   jobRun: Delegate;
-  auditLog: Omit<Delegate, "update" | "upsert" | "deleteMany">;
+  auditLog: Omit<Delegate, "update" | "updateMany" | "upsert" | "deleteMany">;
   $transaction<T>(callback: (tx: DbClient) => Promise<T>): Promise<T>;
   $queryRaw(
     strings: TemplateStringsArray,

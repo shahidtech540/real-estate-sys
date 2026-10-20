@@ -128,8 +128,10 @@ describe.skipIf(!databaseUrl)("login flow (integration)", () => {
     );
     expect(resolved.status).toBe("ok");
 
+    // Scoped to this suite's user: other integration files log in their own
+    // users against the same database (`AGENTS.md` §7.3, AG-Q27).
     const logins = await prisma.auditLog.findMany({
-      where: { actionCode: "auth.login" },
+      where: { actionCode: "auth.login", actorUserId: userId },
     });
     expect(logins).toHaveLength(1);
     expect(logins[0]?.actorUserId).toBe(userId);

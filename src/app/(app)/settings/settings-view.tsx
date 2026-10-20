@@ -206,7 +206,7 @@ export function SettingsView({ initialCompany }: SettingsViewProps) {
   const logoUrl = form.logoFileId ? `/api/files/${form.logoFileId}` : null;
 
   return (
-    <div className="mx-auto max-w-[720px]">
+    <div>
       <header>
         <h1 className="text-lg font-semibold text-ink-900">
           {t("settings.title")}

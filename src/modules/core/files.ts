@@ -151,6 +151,13 @@ export interface BindableFile {
   id: string;
   kind: FileKind;
   deletedAt: Date | null;
+  /**
+   * Stored with the object by the upload pipeline (`ARCHITECTURE.md` §7.3 step
+   * 5), so SET-7 can compare aspect ratios without decoding the image again.
+   * `null` only for an object that never passed the decoder.
+   */
+  widthPx: number | null;
+  heightPx: number | null;
 }
 
 /** Reads only the columns a binding check needs — never the storage key. */
@@ -160,7 +167,13 @@ export async function findFileForBinding(
 ): Promise<BindableFile | null> {
   return (await client.fileObject.findUnique({
     where: { id },
-    select: { id: true, kind: true, deletedAt: true },
+    select: {
+      id: true,
+      kind: true,
+      deletedAt: true,
+      widthPx: true,
+      heightPx: true,
+    },
   })) as BindableFile | null;
 }
 

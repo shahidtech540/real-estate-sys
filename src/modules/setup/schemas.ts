@@ -63,3 +63,92 @@ export const companyBodySchema = z
   .strict();
 
 export type CompanyBody = z.infer<typeof companyBodySchema>;
+
+// ---------------------------------------------------------------------------
+// Projects — `API.md` §3.2 SET-3 … SET-7
+// ---------------------------------------------------------------------------
+
+/** `marlaSqft` for a project is nullable: `null` means "inherit the company". */
+const optionalMarla = z
+  .string()
+  .trim()
+  .regex(/^-?\d{1,8}(\.\d{1,2})?$/, "decimal")
+  .nullish()
+  .transform((value) => value ?? null);
+
+const projectName = z.string().trim().min(1).max(200);
+
+const projectLocation = optionalText(2000);
+
+/** `isActive` arrives as a query string (`SET-3`) and a JSON boolean (`SET-6`). */
+const booleanQuery = z
+  .enum(["true", "false"])
+  .transform((value) => value === "true");
+
+/** `GET /api/projects` — `API.md` §3.2 SET-3, §1.5 pagination (`V-25`). */
+export const listProjectsQuerySchema = z
+  .object({
+    isActive: booleanQuery.optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(50),
+    sort: z.enum(["name", "createdAt"]).default("name"),
+    order: z.enum(["asc", "desc"]).optional(),
+  })
+  .strict();
+export type ListProjectsQuery = z.infer<typeof listProjectsQuerySchema>;
+
+/**
+ * `POST /api/projects` — `API.md` SET-4.
+ *
+ * `companyId` is deliberately absent: it is derived from the singleton company
+ * ("derived, never sent") and `.strict()` rejects a caller that tries to send it
+ * anyway (`V-27`).
+ */
+export const createProjectSchema = z
+  .object({
+    name: projectName,
+    location: projectLocation,
+    marlaSqft: optionalMarla,
+  })
+  .strict();
+export type CreateProjectBody = z.infer<typeof createProjectSchema>;
+
+/**
+ * `PATCH /api/projects/{id}` — `API.md` SET-6. `version` is required (`V-18`);
+ * every other field is optional, and "absent" is distinct from "null" for
+ * `location`/`marlaSqft` because the command only writes what was sent.
+ */
+export const updateProjectSchema = z
+  .object({
+    version: z.number().int().min(0),
+    name: projectName.optional(),
+    location: z
+      .preprocess(
+        (value) =>
+          typeof value === "string" && value.trim() === "" ? null : value,
+        z.string().trim().max(2000).nullish(),
+      )
+      .optional(),
+    marlaSqft: optionalMarla.optional(),
+    isActive: z.boolean().optional(),
+  })
+  .strict();
+export type UpdateProjectBody = z.infer<typeof updateProjectSchema>;
+
+/**
+ * `PUT /api/projects/{id}/master-plan` — `API.md` SET-7.
+ *
+ * `confirmAspectRatioChange` defaults to `false`, so the aspect-ratio guard is
+ * on unless the Admin explicitly accepts the distortion warning.
+ */
+export const masterPlanBodySchema = z
+  .object({
+    fileId: z.string().uuid(),
+    version: z.number().int().min(0),
+    confirmAspectRatioChange: z.boolean().default(false),
+  })
+  .strict();
+export type MasterPlanBody = z.infer<typeof masterPlanBodySchema>;
+
+/** Path parameter of SET-5…SET-7; a non-UUID id can never match a row. */
+export const projectIdParamSchema = z.string().uuid();
