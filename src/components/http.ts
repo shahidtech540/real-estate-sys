@@ -37,10 +37,16 @@ export async function apiRequest<T>(
   url: string,
   init: RequestInit = {},
 ): Promise<T | null> {
+  // COR-1 is `multipart/form-data` (`API.md` §1.1); the browser must set the
+  // boundary itself, so a FormData body gets no Content-Type header.
+  const isFormData =
+    typeof FormData !== "undefined" && init.body instanceof FormData;
   const response = await fetch(url, {
     ...init,
     headers: {
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.body && !isFormData
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...init.headers,
     },
     // Same-origin cookies; the CSRF check is Origin/Host, not a token

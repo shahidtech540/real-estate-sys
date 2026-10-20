@@ -1,7 +1,7 @@
+import { redirect } from "next/navigation";
+import { NotAvailable } from "@/components/not-available";
 import { hasCapability } from "@/core/authz/policy";
 import { getPageSession, listUsers } from "@/modules/identity";
-import { redirect } from "next/navigation";
-import { NotAvailable } from "./not-available";
 import { UsersView } from "./users-view";
 
 /**
